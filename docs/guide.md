@@ -30,7 +30,7 @@ To build the MongoDB C Driver's static libraries, follow these steps:
 
 ```sh
 sudo apt update
-sudo apt install libsasl2-dev libsnappy-dev libzstd-dev
+sudo apt install libsasl2-dev libsnappy-dev libzstd-dev zlib1g-dev
 ```
 
 ### Download and Extract the Driver
@@ -44,6 +44,8 @@ cd mongo-c-driver-2.0.2
 ### Build the Static Libraries
 
 ```sh
+mkdir custom-build && cd custom-build
+
 cmake .. \
   -DENABLE_SRV=OFF \
   -DENABLE_STATIC=ON \

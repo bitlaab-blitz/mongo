@@ -38,11 +38,11 @@ pub fn build(b: *std.Build) void {
 
             pkg.linkSystemLibrary("z", .{});
             pkg.linkSystemLibrary("ssl", .{});
-            pkg.linkSystemLibrary("zstd", {});
-            pkg.linkSystemLibrary("sasl2", {});
-            pkg.linkSystemLibrary("crypto", {});
-            pkg.linkSystemLibrary("resolv", {});
-            pkg.linkSystemLibrary("snappy", {});
+            pkg.linkSystemLibrary("zstd", .{});
+            pkg.linkSystemLibrary("sasl2", .{});
+            pkg.linkSystemLibrary("crypto", .{});
+            pkg.linkSystemLibrary("resolv", .{});
+            pkg.linkSystemLibrary("snappy", .{});
 
             switch (target.query.cpu_arch orelse builtin.cpu.arch) {
                 .aarch64 => {
