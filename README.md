@@ -12,10 +12,10 @@ Mongo currently supports only Linux on **aarch64** and **x86_64** architectures.
 
 ## Dependency
 
-Redox uses `libhiredis.a` (Static Library) along with the necessary header files.
+Mongo uses `libbson2.a` and `libmongoc2.a` (Static Libraries) along with the necessary header files.
 
 No additional step is required to use this project as a package dependency.
 
 ## Documentation
 
-For most up-to-date documentation see - [**Redox Documentation**](https://bitlaabredox.web.app/).
+For most up-to-date documentation see - [**Mongo Documentation**](https://bitlaabmongo.web.app/).
