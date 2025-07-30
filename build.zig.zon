@@ -1,0 +1,17 @@
+.{
+    .name = .mongo,
+    .version = "1.0.0",
+    .fingerprint = 0x713dc4373c6c474a,
+    .minimum_zig_version = "0.15.0-dev.832+1ca213dab",
+    .dependencies = .{},
+    .paths = .{
+        "docs",
+        "lib",
+        "src",
+        "build.zig",
+        "build.zig.zon",
+        "CHANGELOG.md",
+        "LICENSE",
+        "README.md",
+    },
+}
