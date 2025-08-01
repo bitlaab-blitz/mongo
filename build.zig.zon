@@ -3,7 +3,12 @@
     .version = "1.0.0",
     .fingerprint = 0x713dc4373c6c474a,
     .minimum_zig_version = "0.15.0-dev.832+1ca213dab",
-    .dependencies = .{},
+    .dependencies = .{
+        .jsonic = .{
+            .url = "https://github.com/bitlaab-bolt/jsonic/archive/refs/tags/v1.1.0.zip",
+            .hash = "jsonic-1.1.0-Hz02HEK45QAAwg4ljrFzG-0BWv1nJgEQIokHB1Wm_E-e",
+        },
+    },
     .paths = .{
         "docs",
         "lib",

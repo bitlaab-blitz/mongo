@@ -88,3 +88,13 @@ std.debug.print("Redis error: {s}\n", .{redox.errMsg()});
 ```
 
 **Remarks:** Currently, only the string data structure is supported, and only the synchronous interface is implemented.
+
+
+
+
+
+
+
+
+
+
