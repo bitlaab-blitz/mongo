@@ -13,6 +13,9 @@ const StrC = [*c]const u8;
 
 const Uri = ?*mongoc.mongoc_uri_t;
 
+pub const IndexModel = ?*mongoc.mongoc_index_model_t;
+const IndexModelC = [*c]const IndexModel;
+
 pub const Bson = mongoc.bson_t;
 pub const BsonC = [*c]const Bson;
 pub const BsonError = mongoc.bson_error_t;
@@ -231,43 +234,96 @@ pub fn insertMany(coll: Collection, docs: []BsonC, err: *BsonError) bool {
     );
 }
 
+/// # Deletes a Single Document
+/// **CAUTION:** When selector matches multiple documents, only one document
+/// (the first found by MongoDB’s internal query planner) is deleted.
+pub fn deleteOne(
+    coll: Collection,
+    selector: BsonC,
+    reply: [*c]Bson,
+    err: *BsonError
+) bool {
+    return mongoc.mongoc_collection_delete_one(
+        coll, selector, null, reply, err
+    );
+}
 
+/// # Deletes Multiple Documents
+pub fn deleteMany(
+    coll: Collection,
+    selector: BsonC,
+    reply: [*c]Bson,
+    err: *BsonError
+) bool {
+    return mongoc.mongoc_collection_delete_many(
+        coll, selector, null, reply, err
+    );
+}
 
+/// # Updates a Single Document
+pub fn updateOne(
+    coll: Collection,
+    selector: BsonC,
+    update: BsonC,
+    reply: [*c]Bson,
+    err: *BsonError
+) bool {
+    return mongoc.mongoc_collection_update_one(
+        coll, selector, update, null, reply, err
+    );
+}
 
+/// # Updates Multiple Documents
+pub fn updateMany(
+    coll: Collection,
+    selector: BsonC,
+    update: BsonC,
+    reply: [*c]Bson,
+    err: *BsonError
+) bool {
+    return mongoc.mongoc_collection_update_many(
+        coll, selector, update, null, reply, err
+    );
+}
 
+/// # Creates a New Index Model
+pub fn indexModelNew(keys: BsonC, opts: BsonC) IndexModel {
+    return mongoc.mongoc_index_model_new(keys, opts);
+}
 
+/// # Destroys the Index Model
+pub fn indexModelDestroy(model: IndexModel) void {
+    mongoc.mongoc_index_model_destroy(model);
+}
 
+/// # Creates an Index on the Collection
+pub fn createIndex(
+    coll: Collection,
+    model: *const IndexModel,
+    err: *BsonError
+) bool {
+    return mongoc.mongoc_collection_create_indexes_with_opts(
+        coll, @ptrCast(model), 1, null, null, err
+    );
+}
 
+/// # Deletes an Index from the Collection
+pub fn deleteIndex(coll: Collection, name: StrZ, err: *BsonError) bool {
+    return mongoc.mongoc_collection_drop_index_with_opts(
+        coll, @as(StrC, name), null, err
+    );
+}
 
+/// # Returns Index List from the Collection
+pub fn findIndexes(coll: Collection) Cursor {
+    return mongoc.mongoc_collection_find_indexes_with_opts(coll, null);
+}
 
-
-// mongoc_collection_delete_one()
-// Deletes a single document.
-// mongoc_collection_delete_many()
-// Deletes multiple documents.
-// mongoc_collection_update_one()
-// Updates a single document.
-// mongoc_collection_update_many()
-// Updates multiple documents.
-
-
-
-// mongoc_collection_create_index_with_opts()
-// Creates an index on the collection.
-
-// mongoc_collection_drop_index_with_opts()
-// Drops an index by name or pattern.
-
-// mongoc_collection_find_indexes_with_opts()
-// Lists indexes.
-
-// mongoc_collection_stats()
-// Gets collection statistics. (Deprecated in favor of aggregate())
-
-// mongoc_collection_aggregate()
-// Executes an aggregation pipeline.
-
-
+/// # Executes an Aggregation Pipeline
+pub fn aggregate(coll: Collection, pipeline: BsonC) Cursor {
+    const flag = mongoc.MONGOC_QUERY_NONE;
+    return mongoc.mongoc_collection_aggregate(coll, flag, pipeline, null, null);
+}
 
 
 
@@ -357,10 +413,20 @@ pub fn bsonToJSON(doc: BsonC) [*c]u8 {
     );
 }
 
-// pub fn x() void {
-//     mongoc.bson_get_data
-//     mongoc.bson_
-// }
+/// # Extracts BSON Value from a Given Key
+pub fn bsonGetNumeric(doc: BsonC, key: StrZ) ?i64 {
+    var iter: bson.bson_iter_t = undefined;
+
+    if (bson.bson_iter_init_find(&iter, @ptrCast(doc), @as(StrC, key))) {
+        return switch (bson.bson_iter_type(&iter)) {
+            bson.BSON_TYPE_INT32 => bson.bson_iter_int32(&iter),
+            bson.BSON_TYPE_INT64 => bson.bson_iter_int64(&iter),
+            else => null,
+        };
+    }
+
+    return null;
+}
 
 /// # Frees Strings or Memory Blocks
 pub fn bsonFree(data: ?*anyopaque) void { bson.bson_free(data); }
