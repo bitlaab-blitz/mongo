@@ -1,100 +1,253 @@
 # How to use
 
-First, import Redox on your Zig source file.
+First, import Mongo on your Zig source file.
 
 ```zig
 const Mongo = @import("mongo").Mongo;
 ```
 
-# WIP - TODO
-
-
-
-
-
-
-
-
 ## Initial Setup
 
-Let's initialize an Redox instance.
+Following snippet will initialize a database connection the specified pool size.
 
 ```zig
-var gpa_mem = std.heap.DebugAllocator(.{}).init;
-defer std.debug.assert(gpa_mem.deinit() == .ok);
-const heap = gpa_mem.allocator();
-
-var redox = try Redox.Sync.init("127.0.0.1", 6379);
-defer redox.deinit();
+const uri = "mongodb://localhost:27017/?maxPoolSize=50";
+const mongo_db = try Mongo.init(true, uri, "your_example_db");
+defer mongo_db.deinit();
 ```
 
-## Insert a New Record
+## Connect Client to a Database
 
-Replaces the existing record if the key already exists.
+By default, Mongo will connect to the database from the `init()`.
 
 ```zig
-try redox.set("foo", "bar", .Default);
+const db = mongo_db.database();
+defer db.free();
 ```
 
-Inserts the record only if the key already exists.
+You can also connect client to a specified database with:
 
 ```zig
-try redox.set("foo", "bar", .IfExists);
+const db = mongo_db.databaseWith("your_custom_db")
+defer db.free();
 ```
 
-Inserts the record only if the key does not exist.
+## Working with a Collection
+
+After connecting to a database, you can start using a collection.
 
 ```zig
-try redox.set("foo2", "bar2", .IfNotExists);
+const coll = db.collection("foo");
+defer coll.free();
 ```
 
-## Insert a New Record with Ttl
-
-Same as `redox.set()`, with an additional time-to-live (TTL) value in seconds. The record is automatically deleted after this period.
+Let's check if a collection exists on a database.
 
 ```zig
-try redox.setWith("foo", "bar", .Default, 30);
+const result = db.hasCollection("bar");
+std.debug.print("Collection exists: {}\n", .{result});
 ```
 
-## Extract a Record by the Given Key
+You can delete an entire collection with:
 
 ```zig
-const rec = try redox.get("foo");
-defer rec.free();
-std.debug.print("Value: {s}\n", .{rec.value()});
+try coll.drop();
 ```
 
-## Delete a Record by the Given Key
+## CRUD Operations on a Collection
+
+### Count Documents
+
+Following snippet will return the total number of documents in a given collection.
 
 ```zig
-try redox.remove("foo2");
+const result = try coll.count(null, null);
+std.debug.print("Found: {} documents\n", .{result});
 ```
 
-## Scan Partially Matched Keys
+### Find Documents
+
+Following example snippet will return matched documents progressively.
 
 ```zig
-const keys = try redox.scan(heap, "foo:*", 10);
-defer Redox.Sync.free(heap, keys);
+const User = struct { uuid: Str, name: Str, created_at: i64 };
 
-for (keys) |key| { std.debug.print("key: {s}\n", .{key}); }
+const cursor = coll.find(null, null);
+defer cursor.free();
+
+while (try cursor.next(heap, User)) |doc| {
+    defer jsonic.free(heap, doc) catch unreachable;
+
+    std.debug.print("{s}\n", .{doc.uuid});
+    std.debug.print("{s}\n", .{doc.name});
+    std.debug.print("{d}\n", .{doc.created_at});
+}
 ```
 
-## Show Human-Readable Error Message
+### Insert Document
 
-Shows the most recent error that occurred on the HiRedis instance.
+Following example snippet will insert one or more document on a collection.
 
 ```zig
-std.debug.print("Redis error: {s}\n", .{redox.errMsg()});
+const User = struct { name: []const u8, age: u8 };
+
+// Inserts a single document
+
+const user = User {.name = "john", .age = 31};
+try coll.insertOne(heap, user);
+
+// Inserts multiple documents
+
+const users = [_]User {
+    .{.name = "john doe", .age = 31},
+    .{.name = "jane doe", .age = 28}
+};
+
+try coll.insertMany(heap, users[0..]);
 ```
 
-**Remarks:** Currently, only the string data structure is supported, and only the synchronous interface is implemented.
+### Delete Document
 
+Following example snippet will delete one or more document on a collection.
 
+```zig
+const query = try Mongo.bsonBuild(
+    \\ {{ "name": "{s}" }}
+    ,.{"john"}
+);
+defer Mongo.bsonFree(query);
 
+// Deletes a single document
 
+const count_1 = try coll.deleteOne(query);
+std.debug.print("Deleted {d} document\n", .{count_1});
 
+// Deletes multiple documents
 
+const count_2 = try coll.deleteMany(query);
+std.debug.print("Deleted {d} documents\n", .{count_2});
+```
 
+**Remarks:** Always use the above format for building any query such as **filter**, **options**, **pipeline** etc.
 
+### Update Document
 
+Following example snippet will update one or more document on a collection.
 
+```zig
+const query = try Mongo.bsonBuild(
+    \\ {{ "age": {d} }}
+    ,.{31}
+);
+defer Mongo.bsonFree(query);
+
+const update = try Mongo.bsonBuild(
+    \\ {{ "$set": {{ "age": {d} }} }}
+    ,.{56}
+);
+defer Mongo.bsonFree(update);
+
+const result_1 = try coll.updateOne(query, update);
+std.debug.print("Modified {} document\n", .{result_1});
+
+const result_2 = try coll.updateMany(query, update);
+std.debug.print("Modified {} documents\n", .{result_2});
+```
+
+### Create an Index
+
+Following example snippet will create an index on a collection.
+
+```zig
+const model_1 = try Mongo.indexModelCreate(heap, "name", .Asc, true);
+defer Mongo.indexModelDestroy(model_1);
+try coll.indexCreate(&model_1);
+
+const model_2 = try Mongo.indexModelCreate(heap, "age", .Desc, false);
+defer Mongo.indexModelDestroy(model_2);
+try coll.indexCreate(&model_2);
+```
+
+**Remarks:** Order (e.g., `.Asc`, `.Desc`) will tell MongoDB in which order the index should occur. The boolean unique value will enforce uniqueness on a given key.
+
+### Delete an Index
+
+Following example snippet will delete an index from a collection.
+
+```zig
+try coll.deleteIndex("name_index");
+```
+
+### Find Indexes
+
+Following example snippet will show all available indexes on a collection.
+
+```zig
+const cursor = coll.findIndexes();
+defer cursor.free();
+
+while (try cursor.next(heap, Mongo.IndexData)) |doc| {
+    defer jsonic.free(heap, doc) catch unreachable;
+    std.debug.print("v: {} | name: {s}\n", .{doc.v, doc.name});
+}
+```
+
+### Document Aggregation
+
+Following example snippet will aggregate & project documents from a collection.
+
+```zig
+const Info = struct { uuid: Str, name: Str, created_at: i64 };
+
+const pipeline = try Mongo.bsonBuild(
+    \\ [{{
+    \\      "$match": {{
+    \\          "name": {{
+    \\            "$regex": "^CAP\\."
+    \\          }}
+    \\      }}
+    \\ }},
+    \\ {{
+    \\      "$project": {{
+    \\          "uuid": 1,
+    \\          "name": 1,
+    \\          "created_at": 1
+    \\      }}
+    \\ }},
+    \\ {{
+    \\      "$sort": {{
+    \\          "created_at": -1
+    \\      }}
+    \\ }}]
+    ,.{}
+);
+defer Mongo.bsonFree(pipeline);
+
+const cursor = coll.aggregate(pipeline);
+defer cursor.free();
+
+while (try cursor.next(heap, Info)) |doc| {
+    defer jsonic.free(heap, doc) catch unreachable;
+
+    std.debug.print(
+        "uuid: {s}\n name: {s}\n created_at {}\n",
+        .{doc.uuid, doc.name, doc.created_at}
+    );
+}
+```
+
+### ACID Session
+
+Following example snippet pattern should be used to perform session transactions for multiple collections.
+
+```zig
+const acid = try db.session();
+defer acid.free();
+
+try acid.start();
+
+const result = db.hasCollection("bar");
+std.debug.print("Collection exists: {}\n", .{result});
+
+if (res) try acid.end(.Commit) else try acid.end(.Abort);
+```

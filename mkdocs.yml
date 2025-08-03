@@ -4,6 +4,7 @@ nav:
   - Getting Started: index.md
   - How to Install: installation.md
   - How to Use: usage.md
+  - Query Guide: query.md
   - API Reference: reference.md
   - Developer Guide: guide.md
 markdown_extensions:

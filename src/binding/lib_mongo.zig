@@ -7,14 +7,10 @@ const bson = @cImport({ @cInclude("bson/bson.h"); });
 const mongoc = @cImport({ @cInclude("mongoc/mongoc.h"); });
 
 
-// const Str = []const u8;
 const StrZ = [:0]const u8;
 const StrC = [*c]const u8;
 
 const Uri = ?*mongoc.mongoc_uri_t;
-
-pub const IndexModel = ?*mongoc.mongoc_index_model_t;
-const IndexModelC = [*c]const IndexModel;
 
 pub const Bson = mongoc.bson_t;
 pub const BsonC = [*c]const Bson;
@@ -26,9 +22,10 @@ pub const Database = ?*mongoc.mongoc_database_t;
 pub const Collection = ?*mongoc.mongoc_collection_t;
 
 pub const Cursor = ?*mongoc.mongoc_cursor_t;
+pub const Session = ?*mongoc.mongoc_client_session_t;
+pub const IndexModel = ?*mongoc.mongoc_index_model_t;
 
 pub const LogHandle = mongoc.mongoc_log_func_t;
-
 
 
 //##############################################################################
@@ -201,7 +198,6 @@ pub fn find(coll: Collection, filter: ?BsonC, options: ?BsonC) Cursor {
 /// # Destroys the Cursor Handle
 pub fn destroyCursor(cur: Cursor) void { mongoc.mongoc_cursor_destroy(cur); }
 
-
 /// # Iterates the Cursor to the Next Document (Blocking)
 pub fn nextCursor(cur: Cursor, doc: [*c][*c]const Bson) bool {
     return mongoc.mongoc_cursor_next(cur, doc);
@@ -325,50 +321,34 @@ pub fn aggregate(coll: Collection, pipeline: BsonC) Cursor {
     return mongoc.mongoc_collection_aggregate(coll, flag, pipeline, null, null);
 }
 
+//##############################################################################
+//# ACID SESSION --------------------------------------------------------------#
+//##############################################################################
 
+/// # Starts a New Client Session
+pub fn sessionStart(client: Client, err: *BsonError) Session {
+    return mongoc.mongoc_client_start_session(client, null, err);
+}
 
+/// # Destroys the Session Handle
+pub fn sessionDestroy(session: Session) void {
+    mongoc.mongoc_client_session_destroy(session);
+}
 
+/// # Starts a Multi-Document Transaction
+pub fn transactionStart(session: Session, err: *BsonError) bool {
+    return mongoc.mongoc_client_session_start_transaction(session, null, err);
+}
 
-// mongoc_client_start_session()
-// Starts a new client session.
-// mongoc_client_session_destroy()
-// Destroys and frees a session.
-// mongoc_client_session_opts_new()
-// Creates a new session options struct.
-// mongoc_client_session_opts_set_causal_consistency()
-// Sets whether the session is causally consistent.
-// mongoc_client_session_opts_get_causal_consistency()
-// Gets whether causal consistency is enabled.
-// mongoc_client_session_get_lsid()
-// Gets the logical session ID (lsid).
-// mongoc_client_session_get_opts()
-// Gets session options.
-// mongoc_client_session_get_cluster_time()
-// Gets the current cluster time.
-// mongoc_client_session_advance_cluster_time()
-// Updates the cluster time.
-// mongoc_client_session_get_operation_time()
-// Gets the session’s operation time.
-// mongoc_client_session_advance_operation_time()
-// Updates the operation time.
-// mongoc_client_session_append()
-// Appends session information to a command.
-// mongoc_client_session_in_transaction()
-// Checks if a transaction is i
+/// # Commits the Current Transaction
+pub fn transactionCommit(session: Session, err: *BsonError) bool {
+    return mongoc.mongoc_client_session_commit_transaction(session, null, err);
+}
 
-
-
-// mongoc_client_session_start_transaction()
-// Starts a multi-document transaction.
-// mongoc_client_session_commit_transaction()
-// Commits the current transaction.
-// mongoc_client_session_abort_transaction()
-// Aborts the current transaction.
-
-
-
-
-
+/// # Aborts the Current Transaction
+pub fn transactionAbort(session: Session, err: *BsonError) bool {
+    return mongoc.mongoc_client_session_abort_transaction(session, err);
+}
 
 //##############################################################################
 //# BSON DOCUMENT -------------------------------------------------------------#

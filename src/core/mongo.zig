@@ -21,10 +21,10 @@ const StrC = [*c]const u8;
 const Bson = lib_mongo.Bson;
 const BsonPtr = [*c] lib_mongo.Bson;
 
-const Cursor = lib_mongo.Cursor;
-
 pub const IndexModel = lib_mongo.IndexModel;
 pub const IndexData = struct { v: u8, name: []const u8 };
+
+const IndexOrder = enum(i8) { Asc = 1, Desc = -1 };
 
 const Error = error {
     InvalidUri,
@@ -34,8 +34,6 @@ const Error = error {
     OperationFailed,
     InvalidInputString
 };
-
-const IndexOrder = enum(i8) { Asc = 1, Desc = -1 };
 
 db_name: StrZ,
 pool: lib_mongo.Pool,
@@ -160,7 +158,7 @@ pub fn indexModelDestroy(model: IndexModel) void {
 //# DATABASE INTERFACE --------------------------------------------------------#
 //##############################################################################
 
-pub const Database = struct {
+const Database = struct {
     pool: lib_mongo.Pool,
     client: lib_mongo.Client,
     instance: lib_mongo.Database,
@@ -196,13 +194,28 @@ pub const Database = struct {
         const coll = lib_mongo.getCollection(self.instance, name);
         return .{.instance = coll};
     }
+
+    /// # Returns a New Session Handle
+    /// **WARNING:** Return value must be freed by calling `AcidSession.free()`.
+    pub fn session(self: DatabaseZ) Error!AcidSession {
+        var err_res: lib_mongo.BsonError = undefined;
+        const result = lib_mongo.sessionStart(self.client, &err_res);
+
+        if (result == null) {
+            const fmt_str = "Code - {d} | {s}";
+            log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            return Error.OperationFailed;
+        }
+
+        return .{.instance = result};
+    }
 };
 
 //##############################################################################
 //# COLLECTION INTERFACE ------------------------------------------------------#
 //##############################################################################
 
-pub const Collection = struct {
+const Collection = struct {
     instance: lib_mongo.Collection,
 
     const CollectionZ = *const Collection;
@@ -448,7 +461,7 @@ pub const Collection = struct {
 //# ITERATOR INTERFACE --------------------------------------------------------#
 //##############################################################################
 
-pub const Iterator = struct {
+const Iterator = struct {
     instance: lib_mongo.Cursor,
 
     const IteratorZ = *const Iterator;
@@ -487,5 +500,44 @@ pub const Iterator = struct {
     }
 };
 
+//##############################################################################
+//# SESSION INTERFACE ---------------------------------------------------------#
+//##############################################################################
 
+const AcidSession = struct {
+    instance: lib_mongo.Session,
 
+    const Action = enum { Commit, Abort };
+    const AcidSessionZ = *const AcidSession;
+
+    /// # Releases the Season Handle
+    pub fn free(self: AcidSessionZ) void {
+        lib_mongo.sessionDestroy(self.instance);
+    }
+
+    /// # Starts a Multi-Document Transaction
+    pub fn start(self: AcidSessionZ) Error!void {
+        var err_res: lib_mongo.BsonError = undefined;
+        if(!lib_mongo.transactionStart(self.instance, &err_res)) {
+            const fmt_str = "Code - {d} | {s}";
+            log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            return Error.OperationFailed;
+        }
+    }
+
+    /// # Ends a Multi-Document Transaction
+    pub fn end(self: AcidSessionZ, act: Action) Error!void {
+        var err_res: lib_mongo.BsonError = undefined;
+
+        const result = switch(act) {
+            .Commit => lib_mongo.transactionCommit(self.instance, &err_res),
+            .Abort => lib_mongo.transactionAbort(self.instance, &err_res)
+        };
+
+        if(!result) {
+            const fmt_str = "Code - {d} | {s}";
+            log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            return Error.OperationFailed;
+        }
+    }
+};

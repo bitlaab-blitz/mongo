@@ -24,4 +24,4 @@ Here we write upgrading notes and make them as straightforward as possible.
 
 ## [v1.0.0] - 2025-07-30
 
-Initial bare minimum implementation.
+Initial barebones implementation.
