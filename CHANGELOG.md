@@ -22,6 +22,14 @@ Here we write upgrading notes and make them as straightforward as possible.
 - A short description for fixed item 2
 - A short description for fixed item n
 
+## [v1.0.1] - 2025-08-04
+
+Minor BUG fix.
+
+### Changed
+- Swap `comptimePrint` with `buffPrintZ` with 4KB limit
+
+
 ## [v1.0.0] - 2025-08-03
 
 Initial barebones implementation.

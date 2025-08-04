@@ -28,11 +28,12 @@ const IndexOrder = enum(i8) { Asc = 1, Desc = -1 };
 
 const Error = error {
     InvalidUri,
+    NoSpaceLeft,
     InvalidQuery,
     InvalidCursor,
     DoesNotExists,
     OperationFailed,
-    InvalidInputString
+    InvalidInputString,
 };
 
 db_name: StrZ,
@@ -94,7 +95,8 @@ pub fn bsonBuild(comptime fmt_str: Str, args: anytype) Error!BsonPtr {
     const doc = lib_mongo.bsonNew();
     errdefer lib_mongo.bsonDestroy(doc);
 
-    const src = std.fmt.comptimePrint(fmt_str, args);
+    var buff: [4096]u8 = undefined;
+    const src = try std.fmt.bufPrintZ(&buff, fmt_str, args);
 
     var err_res: lib_mongo.BsonError = undefined;
     if(!lib_mongo.bsonFromJSON(doc, src, &err_res)) {
