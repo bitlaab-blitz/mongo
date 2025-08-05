@@ -23,6 +23,14 @@ Here we write upgrading notes and make them as straightforward as possible.
 - A short description for fixed item n
 
 
+## [v1.1.0] - 2025-08-05
+
+Minor BUG fix with debug logging improvements.
+
+### Changed
+- Function signature of `databaseWith()`
+- Internal terminal logging based on debug mode
+
 ## [v1.0.2] - 2025-08-05
 
 Minor improvements.

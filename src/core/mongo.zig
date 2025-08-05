@@ -38,6 +38,7 @@ const Error = error {
 };
 
 db_name: StrZ,
+debug_mode: bool,
 pool: lib_mongo.Pool,
 
 const Self = @This();
@@ -56,12 +57,18 @@ pub fn init(debug_mode: bool, uri_string: StrZ, db_name: StrZ) Error!Self {
     defer lib_mongo.destroyUri(uri);
 
     if (uri == null) {
-        const fmt_str = "Code - {d} | {s}";
-        log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+        if (debug_mode) {
+            const fmt_str = "Code - {d} | {s}";
+            log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+        }
+
         return Error.InvalidUri;
     }
 
-    return .{.db_name = db_name, .pool = lib_mongo.clientPoolNew(uri)};
+    return .{
+        .db_name = db_name,
+        .debug_mode = debug_mode,
+        .pool = lib_mongo.clientPoolNew(uri)};
 }
 
 /// # Destroys MongoDB Client
@@ -78,15 +85,25 @@ pub fn deinit(self: *const Self) void {
 pub fn database(self: *const Self) Database {
     const c = lib_mongo.clientPoolPop(self.pool);
     const d = lib_mongo.clientGetDatabase(c, self.db_name);
-    return .{.pool = self.pool, .client = c, .instance = d};
+    return .{
+        .debug_mode = self.debug_mode,
+        .pool = self.pool,
+        .client = c,
+        .instance = d
+    };
 }
 
 /// # Returns a New Database Handle
 /// **WARNING:** Return value must be freed by calling `Database.free()`.
-pub fn databaseWith(self: *const Self, db_name: StrZ) void {
+pub fn databaseWith(self: *const Self, db_name: StrZ) Database {
     const c = lib_mongo.clientPoolPop(self.pool);
     const d = lib_mongo.clientGetDatabase(c, db_name);
-    return .{.pool = self.pool, .client = c, .instance = d};
+    return .{
+        .debug_mode = self.debug_mode,
+        .pool = self.pool,
+        .client = c,
+        .instance = d
+    };
 }
 
 /// # Builds BSON Document from formatted String
@@ -162,6 +179,7 @@ pub fn indexModelDestroy(model: IndexModel) void {
 //##############################################################################
 
 const Database = struct {
+    debug_mode: bool,
     pool: lib_mongo.Pool,
     client: lib_mongo.Client,
     instance: lib_mongo.Database,
@@ -179,8 +197,11 @@ const Database = struct {
     pub fn drop(self: DatabaseZ) Error!void {
         var err_res: lib_mongo.BsonError = undefined;
         if(!lib_mongo.dropDatabase(self.instance, &err_res)) {
-            const fmt_str = "Code - {d} | {s}";
-            log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            if (self.debug_mode) {
+                const fmt_str = "Code - {d} | {s}";
+                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            }
+
             return Error.DoesNotExists;
         }
     }
@@ -195,7 +216,7 @@ const Database = struct {
     /// **WARNING:** Return value must be freed by calling `Collection.free()`.
     pub fn collection(self: DatabaseZ, name: StrZ) Collection {
         const coll = lib_mongo.getCollection(self.instance, name);
-        return .{.instance = coll};
+        return .{.debug_mode = self.debug_mode, .instance = coll};
     }
 
     /// # Returns a New Session Handle
@@ -205,12 +226,15 @@ const Database = struct {
         const result = lib_mongo.sessionStart(self.client, &err_res);
 
         if (result == null) {
-            const fmt_str = "Code - {d} | {s}";
-            log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            if (self.debug_mode) {
+                const fmt_str = "Code - {d} | {s}";
+                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            }
+
             return Error.OperationFailed;
         }
 
-        return .{.instance = result};
+        return .{.debug_mode = self.debug_mode, .instance = result};
     }
 };
 
@@ -219,6 +243,7 @@ const Database = struct {
 //##############################################################################
 
 const Collection = struct {
+    debug_mode: bool,
     instance: lib_mongo.Collection,
 
     const CollectionZ = *const Collection;
@@ -233,8 +258,11 @@ const Collection = struct {
     pub fn drop(self: CollectionZ) Error!void {
         var err_res: lib_mongo.BsonError = undefined;
         if(!lib_mongo.dropCollection(self.instance, &err_res)) {
-            const fmt_str = "Code - {d} | {s}";
-            log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            if (self.debug_mode) {
+                const fmt_str = "Code - {d} | {s}";
+                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            }
+
             return Error.DoesNotExists;
         }
     }
@@ -247,8 +275,11 @@ const Collection = struct {
         );
 
         if (!succeed) {
-            const fmt_str = "Code - {d} | {s}";
-            log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            if (self.debug_mode) {
+                const fmt_str = "Code - {d} | {s}";
+                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            }
+
             return Error.OperationFailed;
         }
     }
@@ -270,8 +301,11 @@ const Collection = struct {
 
         if (rv >= 0) return rv
         else {
-            const fmt_str = "Code - {d} | {s}";
-            log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            if (self.debug_mode) {
+                const fmt_str = "Code - {d} | {s}";
+                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            }
+
             return Error.InvalidQuery;
         }
     }
@@ -287,7 +321,7 @@ const Collection = struct {
         defer if(filter == null) lib_mongo.bsonDestroy(flt);
 
         const cursor = lib_mongo.find(self.instance, flt, options);
-        return .{.instance = cursor};
+        return .{.debug_mode = self.debug_mode, .instance = cursor};
     }
 
     // # Inserts a Single Document
@@ -304,15 +338,21 @@ const Collection = struct {
         var err_res: lib_mongo.BsonError = undefined;
 
         if (!lib_mongo.bsonFromJSON(doc, json_strZ, &err_res)) {
-            const fmt_str = "Code - {d} | {s}";
-            log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            if (self.debug_mode) {
+                const fmt_str = "Code - {d} | {s}";
+                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            }
+
             return if (err_res.code == 11000) Error.UniqueConstraintViolation
             else Error.OperationFailed;
         }
 
         if (!lib_mongo.insertOne(self.instance, doc, &err_res)) {
-            const fmt_str = "Code - {d} | {s}";
-            log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            if (self.debug_mode) {
+                const fmt_str = "Code - {d} | {s}";
+                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            }
+
             return Error.OperationFailed;
         }
     }
@@ -339,15 +379,22 @@ const Collection = struct {
             defer heap.free(json_strZ);
 
             if (!lib_mongo.bsonFromJSON(docs[i], json_strZ, &err_res)) {
-                const fmt_str = "Code - {d} | {s}";
-                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+                if (self.debug_mode) {
+                    const fmt_str = "Code - {d} | {s}";
+                    const msg = @as(StrC, &err_res.message);
+                    log.err(fmt_str, .{err_res.code, msg});
+                }
+
                 return Error.OperationFailed;
             }
         }
 
         if (!lib_mongo.insertMany(self.instance, @ptrCast(docs), &err_res)) {
-            const fmt_str = "Code - {d} | {s}";
-            log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            if (self.debug_mode) {
+                const fmt_str = "Code - {d} | {s}";
+                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            }
+
             return if (err_res.code == 11000) Error.UniqueConstraintViolation
             else Error.OperationFailed;
         }
@@ -362,8 +409,11 @@ const Collection = struct {
 
         var err_res: lib_mongo.BsonError = undefined;
         if (!lib_mongo.deleteOne(self.instance, selector, reply, &err_res)) {
-            const fmt_str = "Code - {d} | {s}";
-            log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            if (self.debug_mode) {
+                const fmt_str = "Code - {d} | {s}";
+                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            }
+
             return Error.OperationFailed;
         }
 
@@ -378,8 +428,11 @@ const Collection = struct {
 
         var err_res: lib_mongo.BsonError = undefined;
         if (!lib_mongo.deleteMany(self.instance, selector, reply, &err_res)) {
-            const fmt_str = "Code - {d} | {s}";
-            log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            if (self.debug_mode) {
+                const fmt_str = "Code - {d} | {s}";
+                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            }
+
             return Error.OperationFailed;
         }
 
@@ -399,8 +452,11 @@ const Collection = struct {
         );
 
         if (!succeed) {
-            const fmt_str = "Code - {d} | {s}";
-            log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            if (self.debug_mode) {
+                const fmt_str = "Code - {d} | {s}";
+                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            }
+
             return Error.OperationFailed;
         }
 
@@ -419,8 +475,11 @@ const Collection = struct {
         );
 
         if (!succeed) {
-            const fmt_str = "Code - {d} | {s}";
-            log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            if (self.debug_mode) {
+                const fmt_str = "Code - {d} | {s}";
+                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            }
+
             return Error.OperationFailed;
         }
 
@@ -432,8 +491,11 @@ const Collection = struct {
     pub fn indexCreate(self: CollectionZ, models: *const IndexModel) !void {
         var err_res: lib_mongo.BsonError = undefined;
         if (!lib_mongo.createIndex(self.instance, models, &err_res)) {
-            const fmt_str = "Code - {d} | {s}";
-            log.warn(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            if (self.debug_mode) {
+                const fmt_str = "Code - {d} | {s}";
+                log.warn(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            }
+
             return Error.OperationFailed;
         }
     }
@@ -442,8 +504,11 @@ const Collection = struct {
     pub fn deleteIndex(self: CollectionZ, name: StrZ) !void {
         var err_res: lib_mongo.BsonError = undefined;
         if (!lib_mongo.deleteIndex(self.instance, name, &err_res)) {
-            const fmt_str = "Code - {d} | {s}";
-            log.warn(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            if (self.debug_mode) {
+                const fmt_str = "Code - {d} | {s}";
+                log.warn(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            }
+
             return Error.OperationFailed;
         }
     }
@@ -468,6 +533,7 @@ const Collection = struct {
 //##############################################################################
 
 const Iterator = struct {
+    debug_mode: bool,
     instance: lib_mongo.Cursor,
 
     const IteratorZ = *const Iterator;
@@ -486,8 +552,12 @@ const Iterator = struct {
         if (!lib_mongo.nextCursor(self.instance, @ptrCast(&doc))) {
             var err_res: lib_mongo.BsonError = undefined;
             if(lib_mongo.errorCursor(self.instance, &err_res)) {
-                const fmt_str = "Code - {d} | {s}";
-                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+                if (self.debug_mode) {
+                    const fmt_str = "Code - {d} | {s}";
+                    const msg = @as(StrC, &err_res.message);
+                    log.err(fmt_str, .{err_res.code, msg});
+                }
+
                 return Error.InvalidCursor;
             }
 
@@ -511,6 +581,7 @@ const Iterator = struct {
 //##############################################################################
 
 const AcidSession = struct {
+    debug_mode: bool,
     instance: lib_mongo.Session,
 
     const Action = enum { Commit, Abort };
@@ -525,8 +596,11 @@ const AcidSession = struct {
     pub fn start(self: AcidSessionZ) Error!void {
         var err_res: lib_mongo.BsonError = undefined;
         if(!lib_mongo.transactionStart(self.instance, &err_res)) {
-            const fmt_str = "Code - {d} | {s}";
-            log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            if (self.debug_mode) {
+                const fmt_str = "Code - {d} | {s}";
+                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            }
+
             return Error.OperationFailed;
         }
     }
@@ -541,8 +615,11 @@ const AcidSession = struct {
         };
 
         if(!result) {
-            const fmt_str = "Code - {d} | {s}";
-            log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            if (self.debug_mode) {
+                const fmt_str = "Code - {d} | {s}";
+                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            }
+
             return Error.OperationFailed;
         }
     }
