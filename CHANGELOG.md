@@ -25,7 +25,7 @@ Here we write upgrading notes and make them as straightforward as possible.
 
 ## [v1.0.2] - 2025-08-05
 
-Minor improvement fix.
+Minor improvements.
 
 ### Added
 - Error variant for `insertOne()` and `insertMany()` for duplicate keys.
