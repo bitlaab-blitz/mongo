@@ -23,6 +23,13 @@ Here we write upgrading notes and make them as straightforward as possible.
 - A short description for fixed item n
 
 
+## [v1.0.2] - 2025-08-05
+
+Minor improvement fix.
+
+### Added
+- Error variant for `insertOne()` and `insertMany()` for duplicate keys.
+
 ## [v1.0.1] - 2025-08-04
 
 Minor BUG fix.

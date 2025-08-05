@@ -34,6 +34,7 @@ const Error = error {
     DoesNotExists,
     OperationFailed,
     InvalidInputString,
+    UniqueConstraintViolation
 };
 
 db_name: StrZ,
@@ -305,7 +306,8 @@ const Collection = struct {
         if (!lib_mongo.bsonFromJSON(doc, json_strZ, &err_res)) {
             const fmt_str = "Code - {d} | {s}";
             log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
-            return Error.OperationFailed;
+            return if (err_res.code == 11000) Error.UniqueConstraintViolation
+            else Error.OperationFailed;
         }
 
         if (!lib_mongo.insertOne(self.instance, doc, &err_res)) {
@@ -316,7 +318,8 @@ const Collection = struct {
     }
 
     /// # Inserts Multiple Documents
-    /// **Remarks:** Data must a `[]const T`.
+    /// **Remarks:** Data must a `[]const T`. Each document is inserted
+    /// individually, thus not atomic across multiple documents.
     pub fn insertMany(self: CollectionZ, heap: Allocator, data: anytype) !void {
         const docs = try heap.alloc([*c]Bson, data.len);
         for (0..docs.len) |i| docs[i] = lib_mongo.bsonNew();
@@ -345,7 +348,8 @@ const Collection = struct {
         if (!lib_mongo.insertMany(self.instance, @ptrCast(docs), &err_res)) {
             const fmt_str = "Code - {d} | {s}";
             log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
-            return Error.OperationFailed;
+            return if (err_res.code == 11000) Error.UniqueConstraintViolation
+            else Error.OperationFailed;
         }
     }
 
