@@ -23,6 +23,10 @@ Here we write upgrading notes and make them as straightforward as possible.
 - A short description for fixed item n
 
 
+## [v1.1.1] - 2025-08-07
+
+Minor BUG fix for C's `NULL` pointer.
+
 ## [v1.1.0] - 2025-08-05
 
 Minor BUG fix with debug logging improvements.

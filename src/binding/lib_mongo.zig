@@ -184,14 +184,22 @@ pub fn countDocuments(
     err: *BsonError
 ) i64 {
     return mongoc.mongoc_collection_count_documents(
-        coll, @ptrCast(filter), @ptrCast(options), null, reply, err
+        coll,
+        filter orelse @ptrFromInt(0),
+        options orelse @ptrFromInt(0),
+        @ptrFromInt(0),
+        reply,
+        err
     );
 }
 
 /// # Executes a Query
 pub fn find(coll: Collection, filter: ?BsonC, options: ?BsonC) Cursor {
     return mongoc.mongoc_collection_find_with_opts(
-        coll, @ptrCast(filter), @ptrCast(options), null
+        coll,
+        filter orelse @ptrFromInt(0),
+        options orelse @ptrFromInt(0),
+        @ptrFromInt(0)
     );
 }
 
