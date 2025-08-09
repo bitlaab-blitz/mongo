@@ -194,10 +194,10 @@ pub fn countDocuments(
 }
 
 /// # Executes a Query
-pub fn find(coll: Collection, filter: ?BsonC, options: ?BsonC) Cursor {
+pub fn find(coll: Collection, filter: BsonC, options: ?BsonC) Cursor {
     return mongoc.mongoc_collection_find_with_opts(
         coll,
-        filter orelse @ptrFromInt(0),
+        filter,
         options orelse @ptrFromInt(0),
         @ptrFromInt(0)
     );
