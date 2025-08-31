@@ -24,7 +24,7 @@ Here we write upgrading notes and make them as straightforward as possible.
 
 ## [v1.1.2] - 2025-08-31
 
-Minor BUG fix for C's `insertOne` function.
+Minor BUG fix for `insertOne` function.
 
 ## [v1.1.1] - 2025-08-07
 
