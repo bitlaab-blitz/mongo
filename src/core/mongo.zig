@@ -343,8 +343,7 @@ const Collection = struct {
                 log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
             }
 
-            return if (err_res.code == 11000) Error.UniqueConstraintViolation
-            else Error.OperationFailed;
+            return Error.OperationFailed;
         }
 
         if (!lib_mongo.insertOne(self.instance, doc, &err_res)) {
@@ -353,7 +352,8 @@ const Collection = struct {
                 log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
             }
 
-            return Error.OperationFailed;
+            return if (err_res.code == 11000) Error.UniqueConstraintViolation
+            else Error.OperationFailed;
         }
     }
 

@@ -22,6 +22,9 @@ Here we write upgrading notes and make them as straightforward as possible.
 - A short description for fixed item 2
 - A short description for fixed item n
 
+## [v1.1.2] - 2025-08-31
+
+Minor BUG fix for C's `insertOne` function.
 
 ## [v1.1.1] - 2025-08-07
 
