@@ -6,4 +6,4 @@ Make sure to fix or implement the following issues as soon as possible.
 
 ## Doc
 
-- Update web documentation for `v1.1.2`
+- Update web documentation for `v1.2.0`
