@@ -142,7 +142,9 @@ pub fn indexModelCreate(
 
     const ord = @intFromEnum(order);
     const key_fmt = "{{\"{s}\": {d}}}";
-    const key_strZ = try fmt.allocPrintZ(heap, key_fmt, .{doc_key, ord});
+    const key_strZ = try fmt.allocPrintSentinel(
+        heap, key_fmt, .{doc_key, ord}, 0
+    );
     defer heap.free(key_strZ);
 
     var err_res: lib_mongo.BsonError = undefined;
@@ -329,7 +331,9 @@ const Collection = struct {
         const json_str = try StaticJson.stringify(heap, data);
         defer heap.free(json_str);
 
-        const json_strZ = try fmt.allocPrintZ(heap, "{s}", .{json_str});
+        const json_strZ = try fmt.allocPrintSentinel(
+            heap, "{s}", .{json_str}, 0
+        );
         defer heap.free(json_strZ);
 
         const doc = lib_mongo.bsonNew();
