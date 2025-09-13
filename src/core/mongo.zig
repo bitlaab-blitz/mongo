@@ -159,7 +159,9 @@ pub fn indexModelCreate(
     defer lib_mongo.bsonDestroy(opts);
 
     const opts_fmt = "{{\"name\": \"{s}_index\", \"unique\": {}}}";
-    const opts_strZ = try fmt.allocPrintZ(heap, opts_fmt, .{doc_key, unique});
+    const opts_strZ = try fmt.allocPrintSentinel(
+        heap, opts_fmt, .{doc_key, unique}, 0
+    );
     defer heap.free(opts_strZ);
 
     if (!lib_mongo.bsonFromJSON(opts, opts_strZ, &err_res)) {
