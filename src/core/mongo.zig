@@ -381,7 +381,9 @@ const Collection = struct {
             const json_str = try StaticJson.stringify(heap, item);
             defer heap.free(json_str);
 
-            const json_strZ = try fmt.allocPrintZ(heap, "{s}", .{json_str});
+            const json_strZ = try fmt.allocPrintSentinel(
+                heap, "{s}", .{json_str}, 0
+            );
             defer heap.free(json_strZ);
 
             if (!lib_mongo.bsonFromJSON(docs[i], json_strZ, &err_res)) {
