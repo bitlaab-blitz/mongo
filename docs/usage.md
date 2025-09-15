@@ -70,7 +70,7 @@ std.debug.print("Found: {} documents\n", .{result});
 Following example snippet will return matched documents progressively.
 
 ```zig
-const User = struct { uuid: Str, name: Str, created_at: i64 };
+const User = struct { name: []const u8, age: u8 };
 
 const cursor = coll.find(null, null);
 defer cursor.free();
@@ -78,9 +78,8 @@ defer cursor.free();
 while (try cursor.next(heap, User)) |doc| {
     defer jsonic.free(heap, doc) catch unreachable;
 
-    std.debug.print("{s}\n", .{doc.uuid});
     std.debug.print("{s}\n", .{doc.name});
-    std.debug.print("{d}\n", .{doc.created_at});
+    std.debug.print("{d}\n", .{doc.age});
 }
 ```
 
@@ -249,5 +248,5 @@ try acid.start();
 const result = db.hasCollection("bar");
 std.debug.print("Collection exists: {}\n", .{result});
 
-if (res) try acid.end(.Commit) else try acid.end(.Abort);
+if (some_res) try acid.end(.Commit) else try acid.end(.Abort);
 ```

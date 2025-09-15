@@ -8,8 +8,8 @@ const mem = std.mem;
 const Allocator = mem.Allocator;
 
 const jsonic = @import("jsonic");
-const StaticJson = jsonic.StaticJson;
-const DynamicJson = jsonic.DynamicJson;
+const StaticJSON = jsonic.StaticJSON;
+const DynamicJSON = jsonic.DynamicJSON;
 
 const lib_mongo = @import("../binding/lib_mongo.zig");
 
@@ -330,7 +330,7 @@ const Collection = struct {
 
     // # Inserts a Single Document
     pub fn insertOne(self: CollectionZ, heap: Allocator, data: anytype) !void {
-        const json_str = try StaticJson.stringify(heap, data);
+        const json_str = try StaticJSON.stringify(heap, data);
         defer heap.free(json_str);
 
         const json_strZ = try fmt.allocPrintSentinel(
@@ -378,7 +378,7 @@ const Collection = struct {
         var err_res: lib_mongo.BsonError = undefined;
 
         for (data, 0..data.len) |item, i| {
-            const json_str = try StaticJson.stringify(heap, item);
+            const json_str = try StaticJSON.stringify(heap, item);
             defer heap.free(json_str);
 
             const json_strZ = try fmt.allocPrintSentinel(
@@ -525,14 +525,14 @@ const Collection = struct {
     /// **WARNING:** Return value must be freed by calling `Iterator.free()`.
     pub fn findIndexes(self: CollectionZ) Iterator {
         const cursor = lib_mongo.findIndexes(self.instance);
-        return .{.instance = cursor};
+        return .{.debug_mode = self.debug_mode, .instance = cursor};
     }
 
     /// # Executes an Aggregation Pipeline
     /// **WARNING:** Return value must be freed by calling `Iterator.free()`.
     pub fn aggregate(self: CollectionZ, pipeline: BsonPtr) Iterator {
         const cursor = lib_mongo.aggregate(self.instance, pipeline);
-        return .{.instance = cursor};
+        return .{.debug_mode = self.debug_mode, .instance = cursor};
     }
 };
 
@@ -575,10 +575,10 @@ const Iterator = struct {
         const data = lib_mongo.bsonToJSON(doc);
         defer lib_mongo.bsonFree(@ptrCast(data));
 
-        var json = try DynamicJson.init(heap, mem.span(data), .{});
+        var json = try DynamicJSON.init(heap, mem.span(data), .{});
         defer json.deinit();
 
-        return try DynamicJson.parseInto(T, heap, json.data(), .{
+        return try DynamicJSON.parseInto(T, heap, json.data(), .{
             .ignore_unknown_fields = true
         });
     }
