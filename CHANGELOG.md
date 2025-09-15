@@ -25,7 +25,7 @@ Here we write upgrading notes and make them as straightforward as possible.
 
 ## [v1.2.1] - 2025-09-15
 
-Minor code changes required for Zig v0.15.1 breaking changes.
+Minor code changes required for Jsonic v1.2.0.
 
 ## [v1.2.0] - 2025-09-13
 
