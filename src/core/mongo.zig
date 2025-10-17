@@ -68,7 +68,8 @@ pub fn init(debug_mode: bool, uri_string: StrZ, db_name: StrZ) Error!Self {
     return .{
         .db_name = db_name,
         .debug_mode = debug_mode,
-        .pool = lib_mongo.clientPoolNew(uri)};
+        .pool = lib_mongo.clientPoolNew(uri)
+    };
 }
 
 /// # Destroys MongoDB Client
@@ -106,20 +107,22 @@ pub fn databaseWith(self: *const Self, db_name: StrZ) Database {
     };
 }
 
-/// # Builds BSON Document from formatted String
+/// # Builds BSON Document from Formatted String
 /// **Remarks:** Provided string must be a formatted JSON string.
 /// **WARNING:** Return value must be freed by calling `Mongo.bsonFree()`.
-pub fn bsonBuild(comptime fmt_str: Str, args: anytype) Error!BsonPtr {
-    const doc = lib_mongo.bsonNew();
-    errdefer lib_mongo.bsonDestroy(doc);
-
-    var buff: [4096]u8 = undefined;
+pub fn bsonBuild(
+    self: *const Self,
+    comptime fmt_str: Str,
+    args: anytype
+) Error!BsonPtr {
+    var buff: [8192]u8 = undefined;
     const src = try std.fmt.bufPrintZ(&buff, fmt_str, args);
 
+    const doc = lib_mongo.bsonNew();
     var err_res: lib_mongo.BsonError = undefined;
-    if(!lib_mongo.bsonFromJSON(doc, src, &err_res)) {
-        const err_str = "Code - {d} | {s}";
-        log.err(err_str, .{err_res.code, @as(StrC, &err_res.message)});
+    if(!lib_mongo.bsonFromJSON(doc, src, &err_res) and self.debug_mode) {
+        const err_str = "Code - {d} | {s} \n {s}";
+        log.err(err_str, .{err_res.code, @as(StrC, &err_res.message), src});
         return Error.InvalidInputString;
     }
 

@@ -23,6 +23,16 @@ Here we write upgrading notes and make them as straightforward as possible.
 - A short description for fixed item n
 
 
+## [v1.3.0] - 2025-10-17
+
+Bug fixes and better error logging for `bsonBuild()`.
+
+### Changed
+- `bsonBuild()` now expects 3 parameters.
+
+### Fixed
+- Double free memory BUG
+
 ## [v1.2.1] - 2025-09-15
 
 Minor code changes required for Jsonic v1.2.0.
