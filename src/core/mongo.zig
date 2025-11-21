@@ -649,7 +649,7 @@ const Iterator = struct {
 //# SESSION INTERFACE ---------------------------------------------------------#
 //##############################################################################
 
-const AcidSession = struct {
+pub const AcidSession = struct {
     debug_mode: bool,
     instance: lib_mongo.Session,
 

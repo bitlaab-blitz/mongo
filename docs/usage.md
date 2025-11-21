@@ -93,7 +93,7 @@ const User = struct { name: []const u8, age: u8 };
 // Inserts a single document
 
 const user = User {.name = "john", .age = 31};
-try coll.insertOne(heap, user);
+try coll.insertOne(heap, user, null);
 
 // Inserts multiple documents
 
@@ -102,7 +102,7 @@ const users = [_]User {
     .{.name = "jane doe", .age = 28}
 };
 
-try coll.insertMany(heap, users[0..]);
+try coll.insertMany(heap, users[0..], null);
 ```
 
 ### Delete Document
@@ -110,7 +110,7 @@ try coll.insertMany(heap, users[0..]);
 Following example snippet will delete one or more document on a collection.
 
 ```zig
-const query = try Mongo.bsonBuild(
+const query = try Mongo.bsonBuild(&mongo_db, null,
     \\ {{ "name": "{s}" }}
     ,.{"john"}
 );
@@ -118,12 +118,12 @@ defer Mongo.bsonFree(query);
 
 // Deletes a single document
 
-const count_1 = try coll.deleteOne(query);
+const count_1 = try coll.deleteOne(query, null);
 std.debug.print("Deleted {d} document\n", .{count_1});
 
 // Deletes multiple documents
 
-const count_2 = try coll.deleteMany(query);
+const count_2 = try coll.deleteMany(query, null);
 std.debug.print("Deleted {d} documents\n", .{count_2});
 ```
 
@@ -134,7 +134,7 @@ std.debug.print("Deleted {d} documents\n", .{count_2});
 Following example snippet will update one or more document on a collection.
 
 ```zig
-const query = try Mongo.bsonBuild(
+const query = try Mongo.bsonBuild(&mongo_db, null,
     \\ {{ "age": {d} }}
     ,.{31}
 );
@@ -146,10 +146,10 @@ const update = try Mongo.bsonBuild(
 );
 defer Mongo.bsonFree(update);
 
-const result_1 = try coll.updateOne(query, update);
+const result_1 = try coll.updateOne(query, update, null);
 std.debug.print("Modified {} document\n", .{result_1});
 
-const result_2 = try coll.updateMany(query, update);
+const result_2 = try coll.updateMany(query, update, null);
 std.debug.print("Modified {} documents\n", .{result_2});
 ```
 
@@ -198,7 +198,7 @@ Following example snippet will aggregate & project documents from a collection.
 ```zig
 const Info = struct { uuid: Str, name: Str, created_at: i64 };
 
-const pipeline = try Mongo.bsonBuild(
+const pipeline = try Mongo.bsonBuild(&mongo_db, null,
     \\ [{{
     \\      "$match": {{
     \\          "name": {{
@@ -244,9 +244,23 @@ const acid = try db.session();
 defer acid.free();
 
 try acid.start();
+errdefer acid.end(.Abort) catch unreachable;
 
-const result = db.hasCollection("bar");
-std.debug.print("Collection exists: {}\n", .{result});
+const opts = Mongo.bsonNew();
+defer Mongo.bsonFree(opts);
 
-if (some_res) try acid.end(.Commit) else try acid.end(.Abort);
+try acid.append(opts);
+
+const query = try Mongo.bsonBuild(&mongo_db, null,
+    \\ {{ "name": "{s}" }}
+    ,.{"john"}
+);
+defer Mongo.bsonFree(query);
+
+// Deletes a single document as ACID Session
+
+const count = try coll.deleteOne(query, opts);
+std.debug.print("ACID - Deleted {d} document\n", .{count});
+
+if (count == 1) try acid.end(.Commit) else try acid.end(.Abort);
 ```

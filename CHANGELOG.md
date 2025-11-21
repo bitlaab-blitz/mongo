@@ -23,6 +23,20 @@ Here we write upgrading notes and make them as straightforward as possible.
 - A short description for fixed item n
 
 
+## [v1.4.0] - 2025-11-21
+
+Major API level changes for ACID transaction support.
+
+### Added
+
+- `AcidSession` and `Database` structures are public now for better agent code structuring.
+- `append()` on AcidSession structure.
+- `bsonNew()` for creating empty bson document.
+
+### Changed
+
+- `insertOne()`, `insertMany()`, `updateOne()`, `updateMany()`, `deleteOne()`, and `deleteMany()` function signatures for ACID support.
+
 ## [v1.3.0] - 2025-10-17
 
 Bug fixes and better error logging for `bsonBuild()`.
