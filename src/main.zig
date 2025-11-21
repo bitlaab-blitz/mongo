@@ -34,7 +34,7 @@ pub fn main() !void {
         // Inserts a single document
 
         const user = User {.name = "john", .age = 31};
-        try coll.insertOne(heap, user);
+        try coll.insertOne(heap, user, null);
 
         // Inserts multiple documents
 
@@ -43,7 +43,7 @@ pub fn main() !void {
             .{.name = "jane doe", .age = 28}
         };
 
-        try coll.insertMany(heap, users[0..]);
+        try coll.insertMany(heap, users[0..], null);
     }
 
     // Count documents
@@ -69,7 +69,7 @@ pub fn main() !void {
 
     // Delete document
     {
-        const query = try Mongo.bsonBuild(
+        const query = try Mongo.bsonBuild(&mongo_db, null,
             \\ {{ "name": "{s}" }}
             ,.{"john"}
         );
@@ -77,12 +77,12 @@ pub fn main() !void {
 
         // Deletes a single document
 
-        const count_1 = try coll.deleteOne(query);
+        const count_1 = try coll.deleteOne(query, null);
         std.debug.print("Deleted {d} document\n", .{count_1});
 
         // Deletes multiple documents
 
-        const count_2 = try coll.deleteMany(query);
+        const count_2 = try coll.deleteMany(query, null);
         std.debug.print("Deleted {d} documents\n", .{count_2});
 
     }
@@ -115,10 +115,24 @@ pub fn main() !void {
         defer acid.free();
 
         try acid.start();
+        errdefer acid.end(.Abort) catch unreachable;
 
-        const result = db.hasCollection("bar");
-        std.debug.print("Collection exists: {}\n", .{result});
+        const opts = Mongo.bsonNew();
+        defer Mongo.bsonFree(opts);
 
-        if (result) try acid.end(.Commit) else try acid.end(.Abort);
+        try acid.append(opts);
+
+        const query = try Mongo.bsonBuild(&mongo_db, null,
+            \\ {{ "name": "{s}" }}
+            ,.{"john"}
+        );
+        defer Mongo.bsonFree(query);
+
+        // Deletes a single document as ACID Session
+
+        const count = try coll.deleteOne(query, opts);
+        std.debug.print("ACID - Deleted {d} document\n", .{count});
+
+        if (count == 1) try acid.end(.Commit) else try acid.end(.Abort);
     }
 }

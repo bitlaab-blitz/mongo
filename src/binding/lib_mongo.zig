@@ -226,15 +226,27 @@ pub fn errorCursor(cur: Cursor, err: *BsonError) bool {
 }
 
 /// # Inserts a Single Document
-pub fn insertOne(coll: Collection, doc: BsonC, err: *BsonError) bool {
-    return mongoc.mongoc_collection_insert_one(coll, doc, null, null, err);
+pub fn insertOne(
+    coll: Collection,
+    doc: BsonC,
+    opts: ?BsonC,
+    err: *BsonError
+) bool {
+    return mongoc.mongoc_collection_insert_one(
+        coll, doc, opts orelse @ptrFromInt(0), null, err
+    );
 }
 
 /// # Inserts Multiple Documents
-pub fn insertMany(coll: Collection, docs: []BsonC, err: *BsonError) bool {
+pub fn insertMany(
+    coll: Collection,
+    docs: []BsonC,
+    opts: ?BsonC,
+    err: *BsonError
+) bool {
     const docs_ptr: [*c]BsonC = @ptrCast(docs);
     return mongoc.mongoc_collection_insert_many(
-        coll, docs_ptr, docs.len, null, null, err
+        coll, docs_ptr, docs.len, opts orelse @ptrFromInt(0), null, err
     );
 }
 
@@ -244,11 +256,12 @@ pub fn insertMany(coll: Collection, docs: []BsonC, err: *BsonError) bool {
 pub fn deleteOne(
     coll: Collection,
     selector: BsonC,
+    opts: ?BsonC,
     reply: [*c]Bson,
     err: *BsonError
 ) bool {
     return mongoc.mongoc_collection_delete_one(
-        coll, selector, null, reply, err
+        coll, selector, opts orelse @ptrFromInt(0), reply, err
     );
 }
 
@@ -256,11 +269,12 @@ pub fn deleteOne(
 pub fn deleteMany(
     coll: Collection,
     selector: BsonC,
+    opts: ?BsonC,
     reply: [*c]Bson,
     err: *BsonError
 ) bool {
     return mongoc.mongoc_collection_delete_many(
-        coll, selector, null, reply, err
+        coll, selector, opts orelse @ptrFromInt(0), reply, err
     );
 }
 
@@ -269,11 +283,12 @@ pub fn updateOne(
     coll: Collection,
     selector: BsonC,
     update: BsonC,
+    opts: ?BsonC,
     reply: [*c]Bson,
     err: *BsonError
 ) bool {
     return mongoc.mongoc_collection_update_one(
-        coll, selector, update, null, reply, err
+        coll, selector, update, opts orelse @ptrFromInt(0), reply, err
     );
 }
 
@@ -282,11 +297,12 @@ pub fn updateMany(
     coll: Collection,
     selector: BsonC,
     update: BsonC,
+    opts: ?BsonC,
     reply: [*c]Bson,
     err: *BsonError
 ) bool {
     return mongoc.mongoc_collection_update_many(
-        coll, selector, update, null, reply, err
+        coll, selector, update, opts orelse @ptrFromInt(0), reply, err
     );
 }
 
@@ -346,6 +362,15 @@ pub fn sessionDestroy(session: Session) void {
 /// # Starts a Multi-Document Transaction
 pub fn transactionStart(session: Session, err: *BsonError) bool {
     return mongoc.mongoc_client_session_start_transaction(session, null, err);
+}
+
+/// # Adds Session's Transaction Metadata
+pub fn transactionAppend(
+    session: Session,
+    opts: [*c]Bson,
+    err: *BsonError
+) bool {
+    return mongoc.mongoc_client_session_append(session, opts, err);
 }
 
 /// # Commits the Current Transaction

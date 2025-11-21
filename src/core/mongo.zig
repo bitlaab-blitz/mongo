@@ -107,26 +107,32 @@ pub fn databaseWith(self: *const Self, db_name: StrZ) Database {
     };
 }
 
+/// # Returns an Empty BSON Document
+pub fn bsonNew() BsonPtr { return lib_mongo.bsonNew(); }
+
 /// # Builds BSON Document from Formatted String
-/// **Remarks:** Provided string must be a formatted JSON string.
 /// **WARNING:** Return value must be freed by calling `Mongo.bsonFree()`.
+/// - `doc` - When **null**, build from an empty bson document
+///
+/// **Remarks:** Provided string must be a formatted JSON string.
 pub fn bsonBuild(
     self: *const Self,
+    doc: ?BsonPtr,
     comptime fmt_str: Str,
     args: anytype
 ) Error!BsonPtr {
     var buff: [8192]u8 = undefined;
     const src = try std.fmt.bufPrintZ(&buff, fmt_str, args);
 
-    const doc = lib_mongo.bsonNew();
     var err_res: lib_mongo.BsonError = undefined;
-    if(!lib_mongo.bsonFromJSON(doc, src, &err_res) and self.debug_mode) {
+    const bson = if (doc) |bson_doc| bson_doc else bsonNew();
+    if(!lib_mongo.bsonFromJSON(bson, src, &err_res) and self.debug_mode) {
         const err_str = "Code - {d} | {s} \n {s}";
         log.err(err_str, .{err_res.code, @as(StrC, &err_res.message), src});
         return Error.InvalidInputString;
     }
 
-    return if (lib_mongo.bsonValidate(doc)) |_| doc
+    return if (lib_mongo.bsonValidate(bson)) |_| bson
     else Error.InvalidInputString;
 }
 
@@ -185,7 +191,7 @@ pub fn indexModelDestroy(model: IndexModel) void {
 //# DATABASE INTERFACE --------------------------------------------------------#
 //##############################################################################
 
-const Database = struct {
+pub const Database = struct {
     debug_mode: bool,
     pool: lib_mongo.Pool,
     client: lib_mongo.Client,
@@ -298,7 +304,7 @@ const Collection = struct {
         options: ?BsonPtr
     ) Error!i64 {
         const flt = if (filter) |f| f else lib_mongo.bsonNew();
-        defer if(filter == null) lib_mongo.bsonDestroy(flt);
+        defer if (filter == null) lib_mongo.bsonDestroy(flt);
 
         var reply: lib_mongo.Bson = undefined;
         var err_res: lib_mongo.BsonError = undefined;
@@ -331,8 +337,14 @@ const Collection = struct {
         return .{.debug_mode = self.debug_mode, .instance = cursor};
     }
 
-    // # Inserts a Single Document
-    pub fn insertOne(self: CollectionZ, heap: Allocator, data: anytype) !void {
+    /// # Inserts a Single Document
+    /// - `opts` - is required for ACID transaction
+    pub fn insertOne(
+        self: CollectionZ,
+        heap: Allocator,
+        data: anytype,
+        opts: ?BsonPtr
+    ) !void {
         const json_str = try StaticJSON.stringify(heap, data);
         defer heap.free(json_str);
 
@@ -355,7 +367,7 @@ const Collection = struct {
             return Error.OperationFailed;
         }
 
-        if (!lib_mongo.insertOne(self.instance, doc, &err_res)) {
+        if (!lib_mongo.insertOne(self.instance, doc, opts, &err_res)) {
             if (self.debug_mode) {
                 const fmt_str = "Code - {d} | {s}";
                 log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
@@ -367,9 +379,16 @@ const Collection = struct {
     }
 
     /// # Inserts Multiple Documents
-    /// **Remarks:** Data must a `[]const T`. Each document is inserted
-    /// individually, thus not atomic across multiple documents.
-    pub fn insertMany(self: CollectionZ, heap: Allocator, data: anytype) !void {
+    /// **Remarks:** Data must be a `[]const T`. Each document is inserted
+    /// individually, thus not atomic with out ACID across multiple documents.
+    ///
+    /// - `opts` - is required for ACID transaction
+    pub fn insertMany(
+        self: CollectionZ,
+        heap: Allocator,
+        data: anytype,
+        opts: ?BsonPtr
+    ) !void {
         const docs = try heap.alloc([*c]Bson, data.len);
         for (0..docs.len) |i| docs[i] = lib_mongo.bsonNew();
 
@@ -400,7 +419,11 @@ const Collection = struct {
             }
         }
 
-        if (!lib_mongo.insertMany(self.instance, @ptrCast(docs), &err_res)) {
+        const succeed = lib_mongo.insertMany(
+            self.instance, @ptrCast(docs), opts, &err_res
+        );
+
+        if (!succeed) {
             if (self.debug_mode) {
                 const fmt_str = "Code - {d} | {s}";
                 log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
@@ -414,12 +437,22 @@ const Collection = struct {
     /// # Deletes a Single Document
     /// **CAUTION:** When selector matches multiple documents, only one document
     /// (the first found by MongoDB’s internal query planner) is deleted.
-    pub fn deleteOne(self: CollectionZ, selector: BsonPtr) !i64 {
+    ///
+    /// - `opts` - is required for ACID transaction
+    pub fn deleteOne(
+        self: CollectionZ,
+        selector: BsonPtr,
+        opts: ?BsonPtr
+    ) !i64 {
         const reply = lib_mongo.bsonNew();
         defer lib_mongo.bsonDestroy(reply);
 
         var err_res: lib_mongo.BsonError = undefined;
-        if (!lib_mongo.deleteOne(self.instance, selector, reply, &err_res)) {
+        const succeed = lib_mongo.deleteOne(
+            self.instance, selector, opts, reply, &err_res
+        );
+
+        if (!succeed) {
             if (self.debug_mode) {
                 const fmt_str = "Code - {d} | {s}";
                 log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
@@ -433,12 +466,21 @@ const Collection = struct {
     }
 
     /// # Deletes Multiple Documents
-    pub fn deleteMany(self: CollectionZ, selector: BsonPtr) !i64 {
+    /// - `opts` - is required for ACID transaction
+    pub fn deleteMany(
+        self: CollectionZ,
+        selector: BsonPtr,
+        opts: ?BsonPtr
+    ) !i64 {
         const reply = lib_mongo.bsonNew();
         defer lib_mongo.bsonDestroy(reply);
 
         var err_res: lib_mongo.BsonError = undefined;
-        if (!lib_mongo.deleteMany(self.instance, selector, reply, &err_res)) {
+        const succeed = lib_mongo.deleteMany(
+            self.instance, selector, opts, reply, &err_res
+        );
+
+        if (!succeed) {
             if (self.debug_mode) {
                 const fmt_str = "Code - {d} | {s}";
                 log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
@@ -452,14 +494,22 @@ const Collection = struct {
     }
 
     /// # Updates a Single Document
-    /// **Remarks:** Return value is **0**, when updated data is the same.
-    pub fn updateOne(self: CollectionZ, selector: BsonPtr, doc: BsonPtr) !i64 {
+    /// **Remarks:** Updates only the first document that matches the filter.
+    /// Return value is **0**, when updated data is the same.
+    ///
+    /// - `opts` - is required for ACID transaction
+    pub fn updateOne(
+        self: CollectionZ,
+        selector: BsonPtr,
+        doc: BsonPtr,
+        opts: ?BsonPtr
+    ) !i64 {
         const reply = lib_mongo.bsonNew();
         defer lib_mongo.bsonDestroy(reply);
 
         var err_res: lib_mongo.BsonError = undefined;
         const succeed = lib_mongo.updateOne(
-            self.instance, selector, doc, reply, &err_res
+            self.instance, selector, doc, opts, reply, &err_res
         );
 
         if (!succeed) {
@@ -476,13 +526,21 @@ const Collection = struct {
     }
 
     /// # Updates Multiple Documents
-    pub fn updateMany(self: CollectionZ, selector: BsonPtr, doc: BsonPtr) !i64 {
+    /// **Remarks: Updates all documents that match the filter.
+    ///
+    /// - `opts` - is required for ACID transaction
+    pub fn updateMany(
+        self: CollectionZ,
+        selector: BsonPtr,
+        doc: BsonPtr,
+        opts: ?BsonPtr
+    ) !i64 {
         const reply = lib_mongo.bsonNew();
         defer lib_mongo.bsonDestroy(reply);
 
         var err_res: lib_mongo.BsonError = undefined;
         const succeed = lib_mongo.updateMany(
-            self.instance, selector, doc, reply, &err_res
+            self.instance, selector, doc, opts, reply, &err_res
         );
 
         if (!succeed) {
@@ -607,6 +665,20 @@ const AcidSession = struct {
     pub fn start(self: AcidSessionZ) Error!void {
         var err_res: lib_mongo.BsonError = undefined;
         if(!lib_mongo.transactionStart(self.instance, &err_res)) {
+            if (self.debug_mode) {
+                const fmt_str = "Code - {d} | {s}";
+                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            }
+
+            return Error.OperationFailed;
+        }
+    }
+
+    /// # Adds Session's Transaction Metadata
+    /// **Remarks:** Pass this `opts` to the target CURD function for ACID.
+    pub fn append(self: AcidSessionZ, opts: BsonPtr) Error!void {
+        var err_res: lib_mongo.BsonError = undefined;
+        if(!lib_mongo.transactionAppend(self.instance, opts, &err_res)) {
             if (self.debug_mode) {
                 const fmt_str = "Code - {d} | {s}";
                 log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
