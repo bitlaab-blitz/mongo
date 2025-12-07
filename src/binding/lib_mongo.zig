@@ -455,8 +455,28 @@ pub fn bsonAddBool(doc: [*c]Bson, name: StrZ, value: bool) bool {
     );
 }
 
-/// # Adds a New Number Property to the Given Document
-pub fn bsonAddNumber(doc: [*c]Bson, name: StrZ, value: f64) bool {
+/// # Adds a New Int32 Number Property to the Given Document
+pub fn bsonAddInt32(doc: [*c]Bson, name: StrZ, value: i32) bool {
+    return bson.bson_append_int32(
+        @ptrCast(doc),
+        @as(StrC, name),
+        @intCast(name.len),
+        value,
+    );
+}
+
+/// # Adds a New Int64 Number Property to the Given Document
+pub fn bsonAddInt64(doc: [*c]Bson, name: StrZ, value: i64) bool {
+    return bson.bson_append_int64(
+        @ptrCast(doc),
+        @as(StrC, name),
+        @intCast(name.len),
+        value,
+    );
+}
+
+/// # Adds a New Float64 Number Property to the Given Document
+pub fn bsonAddFloat64(doc: [*c]Bson, name: StrZ, value: f64) bool {
     return bson.bson_append_double(
         @ptrCast(doc),
         @as(StrC, name),

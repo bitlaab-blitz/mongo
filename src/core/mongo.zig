@@ -5,6 +5,7 @@ const std = @import("std");
 const fmt = std.fmt;
 const log = std.log;
 const mem = std.mem;
+const math = std.math;
 const Allocator = mem.Allocator;
 
 const jsonic = @import("jsonic");
@@ -19,7 +20,7 @@ const StrZ = [:0]const u8;
 const StrC = [*c]const u8;
 
 const Bson = lib_mongo.Bson;
-const BsonPtr = [*c] lib_mongo.Bson;
+pub const BsonPtr = [*c] lib_mongo.Bson;
 
 pub const IndexModel = lib_mongo.IndexModel;
 pub const IndexData = struct { v: u8, name: []const u8 };
@@ -143,7 +144,11 @@ pub fn bsonAddDoc(doc: BsonPtr, name: StrZ, value: BsonPtr) !void {
 }
 
 /// # Adds a New Property to the Given Document
-/// **Remarks:** Any heap allocations are freed automatically.
+///
+/// **Remarks:**
+/// - Any heap allocations are freed automatically.
+/// - Enum tags gets converted into string.
+/// - Passing optional value is supported.
 pub fn bsonAddProp(
     heap: Allocator,
     doc: BsonPtr,
@@ -173,25 +178,60 @@ pub fn bsonAddProp(
             if (!succeed) return Error.InsertionFailed;
         },
         .int, .comptime_int => {
-            const num: f64 = @floatFromInt(value);
-            const succeed = lib_mongo.bsonAddNumber(doc, key, num);
-            if (!succeed) return Error.InsertionFailed;
+            const min_i32 = math.minInt(i32);
+            const max_i32 = math.maxInt(i32);
+            const min_i64 = math.minInt(i64);
+            const max_i64 = math.maxInt(i64);
+
+            if (value >= min_i32 and value <= max_i32) {
+
+                const succeed = lib_mongo.bsonAddInt32(
+                    doc, key, @intCast(value)
+                );
+                if (!succeed) return Error.InsertionFailed;
+            } else if (value >= min_i64 and value <= max_i64) {
+                const succeed = lib_mongo.bsonAddInt64(
+                    doc, key, @intCast(value)
+                );
+                if (!succeed) return Error.InsertionFailed;
+            } else {
+                const err_str = "mongo: `{s}` in BSON append is too big";
+                @compileError(fmt.comptimePrint(err_str, .{@typeName(T)}));
+            }
         },
         .float, .comptime_float => {
-            const succeed = lib_mongo.bsonAddNumber(doc, key, value);
+            const succeed = lib_mongo.bsonAddFloat64(doc, key, value);
+            if (!succeed) return Error.InsertionFailed;
+        },
+        .@"enum", .@"enum_literal" => {
+            const succeed = lib_mongo.bsonAddString(doc, key, @tagName(value));
             if (!succeed) return Error.InsertionFailed;
         },
         .pointer => |p| {
-            if (p.child == u8) {
-                const val = try heap.allocSentinel(u8, value.len, 0);
-                mem.copyForwards(u8, val, value);
-                defer heap.free(val);
+            switch (p.size) {
+                .slice => {
+                    // Handles []const u8
+                    const val = try heap.allocSentinel(u8, value.len, 0);
+                    mem.copyForwards(u8, val, value);
+                    defer heap.free(val);
 
-                const succeed = lib_mongo.bsonAddString(doc, key, val);
-                if (!succeed) return Error.InsertionFailed;
-            } else {
-                const err_str = "mongo: `{s}` in BSON append is not supported";
-                @compileError(fmt.comptimePrint(err_str, .{@typeName(T)}));
+                    const succeed = lib_mongo.bsonAddString(doc, key, val);
+                    if (!succeed) return Error.InsertionFailed;
+                },
+                .many => {
+                    // Handles [*:0]const u8 - already null-terminated
+                    const succeed = lib_mongo.bsonAddString(doc, key, value);
+                    if (!succeed) return Error.InsertionFailed;
+                },
+                .one => {
+                    // Handle *const [N:0]u8 (pointer to array)
+                    const succeed = lib_mongo.bsonAddString(doc, key, value);
+                    if (!succeed) return Error.InsertionFailed;
+                },
+                else => {
+                    const err_str = "mongo: Invalid pointer size `{s}`";
+                    @compileError(fmt.comptimePrint(err_str, .{@typeName(T)}));
+                },
             }
         },
         else => {
@@ -199,6 +239,16 @@ pub fn bsonAddProp(
             @compileError(fmt.comptimePrint(err_str, .{@typeName(T)}));
         }
     }
+}
+
+/// # Adds a New Property to the Given Document
+/// **Remarks:** Same as `bsonAddProp()`, except NOP when value is **null**.
+pub fn bsonSetProp(heap: Allocator,
+    doc: BsonPtr,
+    name: Str,
+    value: anytype
+) !void {
+    if (value != null) try bsonAddProp(heap, doc, name, value);
 }
 
 /// # Converts BSON Document into a JSON-Formatted String

@@ -135,4 +135,31 @@ pub fn main() !void {
 
         if (count == 1) try acid.end(.Commit) else try acid.end(.Abort);
     }
+
+    {
+        const q = Mongo.bsonNew();
+        defer Mongo.bsonFree(q);
+
+        try Mongo.bsonAddProp(heap, q, "num_i32", 2_147_483_647);
+        try Mongo.bsonAddProp(heap, q, "num_i64", 2_147_483_648);
+
+        const Foo = enum { Bar, Baz };
+        const foo = Foo.Bar;
+
+        try Mongo.bsonAddProp(heap, q, "name", "cool cat");
+        try Mongo.bsonAddProp(heap, q, "tag1", foo);
+        try Mongo.bsonAddProp(heap, q, "tag2", .Baz);
+
+        const bar1: ?i32 = null;
+        const bar2: ?i32 = 5000;
+
+        try Mongo.bsonSetProp(heap, q, "bar1", bar1);
+        try Mongo.bsonSetProp(heap, q, "bar2", bar2);
+        try Mongo.bsonSetProp(heap, q, "bar3", null);
+
+        const out = try Mongo.bsonToJsonString(heap, q);
+        defer heap.free(out);
+
+        std.debug.print("{s}\n", .{out});
+    }
 }
