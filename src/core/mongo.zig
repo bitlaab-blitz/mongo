@@ -32,6 +32,7 @@ const Error = error {
     InvalidQuery,
     InvalidCursor,
     DoesNotExists,
+    InsertionFailed,
     OperationFailed,
     InvalidInputString,
     UniqueConstraintViolation
@@ -110,11 +111,10 @@ pub fn databaseWith(self: *const Self, db_name: StrZ) Database {
 /// # Returns an Empty BSON Document
 pub fn bsonNew() BsonPtr { return lib_mongo.bsonNew(); }
 
-/// # Builds BSON Document from Formatted String
+/// # Builds BSON Document from a Formatted JSON String
 /// **WARNING:** Return value must be freed by calling `Mongo.bsonFree()`.
-/// - `doc` - When **null**, build from an empty bson document
 ///
-/// **Remarks:** Provided string must be a formatted JSON string.
+/// - `doc` - When **null**, builds from an empty BSON document
 pub fn bsonBuild(
     self: *const Self,
     doc: ?BsonPtr,
@@ -134,6 +134,85 @@ pub fn bsonBuild(
 
     return if (lib_mongo.bsonValidate(bson)) |_| bson
     else Error.InvalidInputString;
+}
+
+/// # Adds a New Sub Document to the Given Parent Document
+pub fn bsonAddDoc(doc: BsonPtr, name: StrZ, value: BsonPtr) !void {
+    const succeed = lib_mongo.bsonAddDoc(doc, name, value);
+    if (!succeed) return Error.InsertionFailed;
+}
+
+/// # Adds a New Property to the Given Document
+/// **Remarks:** Any heap allocations are freed automatically.
+pub fn bsonAddProp(
+    heap: Allocator,
+    doc: BsonPtr,
+    name: Str,
+    value: anytype
+) !void {
+    const T = @TypeOf(value);
+
+    const key = try heap.allocSentinel(u8, name.len, 0);
+    mem.copyForwards(u8, key, name);
+    defer heap.free(key);
+
+    switch (@typeInfo(T)) {
+        .optional => {
+            if (value) |v| try bsonAddProp(heap, doc, name, v)
+            else {
+                const succeed = lib_mongo.bsonAddNull(doc, key);
+                if (!succeed) return Error.InsertionFailed;
+            }
+        },
+        .null => {
+            const succeed = lib_mongo.bsonAddNull(doc, key);
+            if (!succeed) return Error.InsertionFailed;
+        },
+        .bool => {
+            const succeed = lib_mongo.bsonAddBool(doc, key, value);
+            if (!succeed) return Error.InsertionFailed;
+        },
+        .int, .comptime_int => {
+            const num: f64 = @floatFromInt(value);
+            const succeed = lib_mongo.bsonAddNumber(doc, key, num);
+            if (!succeed) return Error.InsertionFailed;
+        },
+        .float, .comptime_float => {
+            const succeed = lib_mongo.bsonAddNumber(doc, key, value);
+            if (!succeed) return Error.InsertionFailed;
+        },
+        .pointer => |p| {
+            if (p.child == u8) {
+                const val = try heap.allocSentinel(u8, value.len, 0);
+                mem.copyForwards(u8, val, value);
+                defer heap.free(val);
+
+                const succeed = lib_mongo.bsonAddString(doc, key, val);
+                if (!succeed) return Error.InsertionFailed;
+            } else {
+                const err_str = "mongo: `{s}` in BSON append is not supported";
+                @compileError(fmt.comptimePrint(err_str, .{@typeName(T)}));
+            }
+        },
+        else => {
+            const err_str = "mongo: `{s}` in BSON append is not supported";
+            @compileError(fmt.comptimePrint(err_str, .{@typeName(T)}));
+        }
+    }
+}
+
+/// # Converts BSON Document into a JSON-Formatted String
+/// **Remarks:** Intended to be used for debugging purposes.
+///
+/// - **WARNING:** Return value must be freed by the caller.
+pub fn bsonToJsonString(heap: Allocator, doc: BsonPtr) !Str {
+    const data = lib_mongo.bsonToJSON(doc);
+    defer lib_mongo.bsonFree(@ptrCast(data));
+
+    const json_str: []const u8 = mem.span(data);
+    const out = try heap.alloc(u8, json_str.len);
+    mem.copyForwards(u8, out, json_str);
+    return out;
 }
 
 /// # Destroys a BSON Document

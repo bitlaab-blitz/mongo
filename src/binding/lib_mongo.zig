@@ -426,6 +426,56 @@ pub fn bsonToJSON(doc: BsonC) [*c]u8 {
     );
 }
 
+/// # Adds a New Sub Document to the Given Parent Document
+pub fn bsonAddDoc(doc: [*c]Bson, name: StrZ, value: [*c]Bson) bool {
+    return bson.bson_append_document(
+        @ptrCast(doc),
+        @as(StrC, name),
+        @intCast(name.len),
+        @ptrCast(value),
+    );
+}
+
+/// # Adds a New Null Property to the Given Document
+pub fn bsonAddNull(doc: [*c]Bson, name: StrZ) bool {
+    return bson.bson_append_null(
+        @ptrCast(doc),
+        @as(StrC, name),
+        @intCast(name.len)
+    );
+}
+
+/// # Adds a New Boolean Property to the Given Document
+pub fn bsonAddBool(doc: [*c]Bson, name: StrZ, value: bool) bool {
+    return bson.bson_append_bool(
+        @ptrCast(doc),
+        @as(StrC, name),
+        @intCast(name.len),
+        value,
+    );
+}
+
+/// # Adds a New Number Property to the Given Document
+pub fn bsonAddNumber(doc: [*c]Bson, name: StrZ, value: f64) bool {
+    return bson.bson_append_double(
+        @ptrCast(doc),
+        @as(StrC, name),
+        @intCast(name.len),
+        value,
+    );
+}
+
+/// # Adds a New String Property to the Given Document
+pub fn bsonAddString(doc: [*c]Bson, name: StrZ, value: StrZ) bool {
+    return bson.bson_append_utf8(
+        @ptrCast(doc),
+        @as(StrC, name),
+        @intCast(name.len),
+        @as(StrC, value),
+        @intCast(value.len),
+    );
+}
+
 /// # Extracts BSON Value from a Given Key
 pub fn bsonGetNumeric(doc: BsonC, key: StrZ) ?i64 {
     var iter: bson.bson_iter_t = undefined;

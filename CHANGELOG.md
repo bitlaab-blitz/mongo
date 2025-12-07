@@ -23,6 +23,17 @@ Here we write upgrading notes and make them as straightforward as possible.
 - A short description for fixed item n
 
 
+## [v1.5.0] - 2025-12-07
+
+Enhanced BSON query building capabilities.
+
+### Added
+
+- `bsonAddDoc()` - For adding sub-document to a parent document.
+- `bsonAddProp()` - For adding extra runtime property to a given document.
+- `bsonToJsonString()` - For BSON to stringified JSON representation.
+
+
 ## [v1.4.0] - 2025-11-21
 
 Major API level changes for ACID transaction support.
