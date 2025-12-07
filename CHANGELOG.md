@@ -29,8 +29,8 @@ Enhanced BSON query building capabilities.
 
 ### Added
 
-- `bsonAddDoc()` - For adding sub-document to a parent document.
-- `bsonAddProp()` - For adding extra runtime property to a given document.
+- `bsonAddDoc()` - For adding a sub-document to a parent document.
+- `bsonAddProp()` - For adding an extra runtime property to a given document.
 - `bsonSetProp()` - Same as `bsonAddProp()`, except NOP when value is `null`.
 - `bsonToJsonString()` - For BSON to stringified JSON representation.
 
