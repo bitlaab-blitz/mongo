@@ -650,7 +650,7 @@ const Collection = struct {
             return Error.OperationFailed;
         }
 
-        return if (lib_mongo.bsonGetNumeric(reply, "modifiedCount")) |c| c
+        return if (lib_mongo.bsonGetNumeric(reply, "matchedCount")) |c| c
         else Error.OperationFailed;
     }
 
@@ -681,7 +681,7 @@ const Collection = struct {
             return Error.OperationFailed;
         }
 
-        return if (lib_mongo.bsonGetNumeric(reply, "modifiedCount")) |c| c
+        return if (lib_mongo.bsonGetNumeric(reply, "matchedCount")) |c| c
         else Error.OperationFailed;
     }
 

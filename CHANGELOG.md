@@ -22,6 +22,13 @@ Here we write upgrading notes and make them as straightforward as possible.
 - A short description for fixed item 2
 - A short description for fixed item n
 
+## [v1.5.1] - 2026-01-15
+
+CRUD update improvements.
+
+### Changed
+
+- From now on `updateOne()` and `updateMany()` will return `matchedCount` rather then the `modifiedCount`
 
 ## [v1.5.0] - 2025-12-07
 

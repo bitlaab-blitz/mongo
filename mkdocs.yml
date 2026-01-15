@@ -1,4 +1,4 @@
-site_name: mongo v1.5.0
+site_name: mongo v1.5.1
 site_url: http://127.0.0.1
 nav:
   - Getting Started: index.md
@@ -48,4 +48,4 @@ extra:
       link: https://www.linkedin.com/company/bitlaab
     - icon: fontawesome/brands/github
       link: https://github.com/bitlaab-bolt
-copyright: Copyright © 2025 bitlaab™
+copyright: Copyright © 2026 bitlaab™
