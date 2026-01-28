@@ -29,6 +29,7 @@ const IndexOrder = enum(i8) { Asc = 1, Desc = -1 };
 
 const Error = error {
     InvalidUri,
+    OutOfMemory,
     NoSpaceLeft,
     InvalidQuery,
     InvalidCursor,
@@ -124,6 +125,34 @@ pub fn bsonBuild(
 ) Error!BsonPtr {
     var buff: [8192]u8 = undefined;
     const src = try std.fmt.bufPrintZ(&buff, fmt_str, args);
+
+    var err_res: lib_mongo.BsonError = undefined;
+    const bson = if (doc) |bson_doc| bson_doc else bsonNew();
+    if(!lib_mongo.bsonFromJSON(bson, src, &err_res) and self.debug_mode) {
+        const err_str = "Code - {d} | {s} \n {s}";
+        log.err(err_str, .{err_res.code, @as(StrC, &err_res.message), src});
+        return Error.InvalidInputString;
+    }
+
+    return if (lib_mongo.bsonValidate(bson)) |_| bson
+    else Error.InvalidInputString;
+}
+
+/// # Builds BSON Document from a Formatted JSON String
+/// **WARNING:** Return value must be freed by calling `Mongo.bsonFree()`.
+///
+/// - `doc` - When **null**, builds from an empty BSON document
+///
+/// **Remarks:** Same as `bsonBuild()`, use for arbitrarily long input data.
+pub fn bsonBuildLarge(
+    self: *const Self,
+    heap: Allocator,
+    doc: ?BsonPtr,
+    comptime fmt_str: Str,
+    args: anytype
+) Error!BsonPtr {
+    const src = try std.fmt.allocPrintSentinel(heap, fmt_str, args, 0);
+    defer heap.free(src);
 
     var err_res: lib_mongo.BsonError = undefined;
     const bson = if (doc) |bson_doc| bson_doc else bsonNew();

@@ -22,6 +22,15 @@ Here we write upgrading notes and make them as straightforward as possible.
 - A short description for fixed item 2
 - A short description for fixed item n
 
+
+## [v1.5.2] - 2026-01-28
+
+BSON builder for arbitrarily large input data
+
+### Added
+
+- `bsonBuildLarge()` - Heap allocated BSON builder.
+
 ## [v1.5.1] - 2026-01-15
 
 CRUD update improvements.
