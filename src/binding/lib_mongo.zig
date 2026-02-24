@@ -10,7 +10,7 @@ const mongoc = @cImport({ @cInclude("mongoc/mongoc.h"); });
 const StrZ = [:0]const u8;
 const StrC = [*c]const u8;
 
-const Uri = ?*mongoc.mongoc_uri_t;
+pub const Uri = ?*mongoc.mongoc_uri_t;
 
 pub const Bson = mongoc.bson_t;
 pub const BsonC = [*c]const Bson;

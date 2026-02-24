@@ -42,6 +42,7 @@ const Error = error {
 
 db_name: StrZ,
 debug_mode: bool,
+uri: lib_mongo.Uri,
 pool: lib_mongo.Pool,
 
 const Self = @This();
@@ -57,7 +58,6 @@ pub fn init(debug_mode: bool, uri_string: StrZ, db_name: StrZ) Error!Self {
 
     var err_res: lib_mongo.BsonError = undefined;
     const uri = lib_mongo.newUri(uri_string, &err_res);
-    defer lib_mongo.destroyUri(uri);
 
     if (uri == null) {
         if (debug_mode) {
@@ -71,6 +71,7 @@ pub fn init(debug_mode: bool, uri_string: StrZ, db_name: StrZ) Error!Self {
     return .{
         .db_name = db_name,
         .debug_mode = debug_mode,
+        .uri = uri,
         .pool = lib_mongo.clientPoolNew(uri)
     };
 }
@@ -79,7 +80,14 @@ pub fn init(debug_mode: bool, uri_string: StrZ, db_name: StrZ) Error!Self {
 /// **Remarks:** Intended for internal use only.
 pub fn deinit(self: *const Self) void {
     lib_mongo.clientPoolDestroy(self.pool);
+    lib_mongo.destroyUri(self.uri);
     lib_mongo.cleanUp();
+}
+
+/// # Resets MongoDB Connection Pool
+pub fn resetPool(self: *Self) void {
+    lib_mongo.clientPoolDestroy(self.pool);
+    self.pool = lib_mongo.clientPoolNew(self.uri);
 }
 
 /// # Returns a New Database Handle
