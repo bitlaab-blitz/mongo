@@ -37,6 +37,7 @@ const Error = error {
     InsertionFailed,
     OperationFailed,
     InvalidInputString,
+    FailedToExecCommand,
     UniqueConstraintViolation
 };
 
@@ -136,7 +137,7 @@ pub fn bsonBuild(
 
     var err_res: lib_mongo.BsonError = undefined;
     const bson = if (doc) |bson_doc| bson_doc else bsonNew();
-    if(!lib_mongo.bsonFromJSON(bson, src, &err_res) and self.debug_mode) {
+    if (!lib_mongo.bsonFromJSON(bson, src, &err_res) and self.debug_mode) {
         const err_str = "Code - {d} | {s} \n {s}";
         log.err(err_str, .{err_res.code, @as(StrC, &err_res.message), src});
         return Error.InvalidInputString;
@@ -164,7 +165,7 @@ pub fn bsonBuildLarge(
 
     var err_res: lib_mongo.BsonError = undefined;
     const bson = if (doc) |bson_doc| bson_doc else bsonNew();
-    if(!lib_mongo.bsonFromJSON(bson, src, &err_res) and self.debug_mode) {
+    if (!lib_mongo.bsonFromJSON(bson, src, &err_res) and self.debug_mode) {
         const err_str = "Code - {d} | {s} \n {s}";
         log.err(err_str, .{err_res.code, @as(StrC, &err_res.message), src});
         return Error.InvalidInputString;
@@ -375,7 +376,7 @@ pub const Database = struct {
     /// **CAUTION:** Destructive operation, CAN NOT be undone!
     pub fn drop(self: DatabaseZ) Error!void {
         var err_res: lib_mongo.BsonError = undefined;
-        if(!lib_mongo.dropDatabase(self.instance, &err_res)) {
+        if (!lib_mongo.dropDatabase(self.instance, &err_res)) {
             if (self.debug_mode) {
                 const fmt_str = "Code - {d} | {s}";
                 log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
@@ -436,7 +437,7 @@ const Collection = struct {
     /// **CAUTION:** Destructive operation, CAN NOT be undone!
     pub fn drop(self: CollectionZ) Error!void {
         var err_res: lib_mongo.BsonError = undefined;
-        if(!lib_mongo.dropCollection(self.instance, &err_res)) {
+        if (!lib_mongo.dropCollection(self.instance, &err_res)) {
             if (self.debug_mode) {
                 const fmt_str = "Code - {d} | {s}";
                 log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
@@ -497,7 +498,7 @@ const Collection = struct {
         options: ?BsonPtr
     ) Iterator {
         const flt = if (filter) |f| f else lib_mongo.bsonNew();
-        defer if(filter == null) lib_mongo.bsonDestroy(flt);
+        defer if (filter == null) lib_mongo.bsonDestroy(flt);
 
         const cursor = lib_mongo.find(self.instance, flt, options);
         return .{.debug_mode = self.debug_mode, .instance = cursor};
@@ -786,7 +787,7 @@ const Iterator = struct {
 
         if (!lib_mongo.nextCursor(self.instance, @ptrCast(&doc))) {
             var err_res: lib_mongo.BsonError = undefined;
-            if(lib_mongo.errorCursor(self.instance, &err_res)) {
+            if (lib_mongo.errorCursor(self.instance, &err_res)) {
                 if (self.debug_mode) {
                     const fmt_str = "Code - {d} | {s}";
                     const msg = @as(StrC, &err_res.message);
@@ -830,7 +831,7 @@ pub const AcidSession = struct {
     /// # Starts a Multi-Document Transaction
     pub fn start(self: AcidSessionZ) Error!void {
         var err_res: lib_mongo.BsonError = undefined;
-        if(!lib_mongo.transactionStart(self.instance, &err_res)) {
+        if (!lib_mongo.transactionStart(self.instance, &err_res)) {
             if (self.debug_mode) {
                 const fmt_str = "Code - {d} | {s}";
                 log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
@@ -844,7 +845,7 @@ pub const AcidSession = struct {
     /// **Remarks:** Pass this `opts` to the target CURD function for ACID.
     pub fn append(self: AcidSessionZ, opts: BsonPtr) Error!void {
         var err_res: lib_mongo.BsonError = undefined;
-        if(!lib_mongo.transactionAppend(self.instance, opts, &err_res)) {
+        if (!lib_mongo.transactionAppend(self.instance, opts, &err_res)) {
             if (self.debug_mode) {
                 const fmt_str = "Code - {d} | {s}";
                 log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
@@ -863,7 +864,7 @@ pub const AcidSession = struct {
             .Abort => lib_mongo.transactionAbort(self.instance, &err_res)
         };
 
-        if(!result) {
+        if (!result) {
             if (self.debug_mode) {
                 const fmt_str = "Code - {d} | {s}";
                 log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});

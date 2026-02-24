@@ -23,6 +23,14 @@ Here we write upgrading notes and make them as straightforward as possible.
 - A short description for fixed item n
 
 
+## [v1.6.0] - 2026-02-24
+
+Minor refactoring with connection pool reset capabilities.
+
+### Added
+
+- `resetPool()` for resetting the pool when `FailedToExecCommand` error occurs.
+
 ## [v1.5.2] - 2026-01-28
 
 BSON builder for arbitrarily large input data
