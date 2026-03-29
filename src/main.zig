@@ -14,7 +14,7 @@ pub fn main() !void {
 
     // Let's start from here...
 
-    const uri = "mongodb://localhost:27017/?maxPoolSize=50";
+    const uri = "mongodb://localhost:27017?maxPoolSize=50&replicaSet=rs0&serverSelectionTimeoutMS=5000&connectTimeoutMS=10000&retryWrites=true&retryReads=true";
     const mongo_db = try Mongo.init(true, uri, "your_example_db");
     defer mongo_db.deinit();
 

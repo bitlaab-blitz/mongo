@@ -37,7 +37,6 @@ const Error = error {
     InsertionFailed,
     OperationFailed,
     InvalidInputString,
-    FailedToExecCommand,
     UniqueConstraintViolation
 };
 
@@ -45,6 +44,7 @@ db_name: StrZ,
 debug_mode: bool,
 uri: lib_mongo.Uri,
 pool: lib_mongo.Pool,
+resetting: bool = false,
 
 const Self = @This();
 
@@ -87,6 +87,9 @@ pub fn deinit(self: *const Self) void {
 
 /// # Resets MongoDB Connection Pool
 pub fn resetPool(self: *Self) void {
+    if (@atomicRmw(bool, &self.resetting, .Xchg, true, .seq_cst)) return;
+    defer @atomicStore(bool, &self.resetting, false, .seq_cst);
+
     lib_mongo.clientPoolDestroy(self.pool);
     self.pool = lib_mongo.clientPoolNew(self.uri);
 }

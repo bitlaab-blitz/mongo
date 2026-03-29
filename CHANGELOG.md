@@ -22,6 +22,9 @@ Here we write upgrading notes and make them as straightforward as possible.
 - A short description for fixed item 2
 - A short description for fixed item n
 
+## [v1.6.1] - 2026-03-29
+
+Minor refactoring with atomic connection pool reset capabilities.
 
 ## [v1.6.0] - 2026-02-24
 
