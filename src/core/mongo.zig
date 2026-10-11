@@ -136,7 +136,7 @@ pub fn bsonBuild(
     args: anytype
 ) Error!BsonPtr {
     var buff: [8192]u8 = undefined;
-    const src = try std.fmt.bufPrintZ(&buff, fmt_str, args);
+    const src = try std.fmt.bufPrintSentinel(&buff, fmt_str, args, 0);
 
     var err_res: lib_mongo.BsonError = undefined;
     const bson = if (doc) |bson_doc| bson_doc else bsonNew();

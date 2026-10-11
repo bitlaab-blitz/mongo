@@ -3,8 +3,8 @@
 
 const std = @import("std");
 
-const bson = @cImport({ @cInclude("bson/bson.h"); });
-const mongoc = @cImport({ @cInclude("mongoc/mongoc.h"); });
+const bson = @import("bson");
+const mongoc = @import("mongoc");
 
 
 const StrZ = [:0]const u8;

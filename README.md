@@ -6,7 +6,7 @@ Mongo is a lightweight wrapper over the C-based [libmongoc](https://github.com/m
 
 ## Platform Support
 
-Mongo currently supports only Linux on **aarch64** and **x86_64** architectures.
+Supports only Linux on **aarch64** and **x86_64** architectures.
 
 ## Dependency
 
@@ -16,4 +16,4 @@ No additional step is required to use this project as a package dependency.
 
 ## Documentation
 
-For most up-to-date documentation see - [**Mongo Documentation**](https://bitlaabmongo.web.app/).
+For most up-to-date documentation see - [**Mongo Documentation**](https://bitlaab.com/api-doc?pkg=mongo).

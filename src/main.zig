@@ -60,7 +60,7 @@ pub fn main() !void {
         defer cursor.free();
 
         while (try cursor.next(heap, User)) |doc| {
-            defer jsonic.free(heap, doc) catch unreachable;
+            defer jsonic.free(heap, doc);
 
             std.debug.print("{s}\n", .{doc.name});
             std.debug.print("{d}\n", .{doc.age});
@@ -104,7 +104,7 @@ pub fn main() !void {
         defer cursor.free();
 
         while (try cursor.next(heap, Mongo.IndexData)) |doc| {
-            defer jsonic.free(heap, doc) catch unreachable;
+            defer jsonic.free(heap, doc);
             std.debug.print("v: {} | name: {s}\n", .{doc.v, doc.name});
         }
     }
