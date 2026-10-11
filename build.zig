@@ -16,7 +16,6 @@ pub fn build(b: *std.Build) void {
     translate_c.addIncludePath(b.path("libs/include"));
     const c_mod = translate_c.createModule();
 
-
     // Exposing as a dependency for other projects
     const pkg = b.addModule("mongo", .{
         .root_source_file = b.path("src/root.zig"),

@@ -337,6 +337,181 @@ pub fn bsonSetProp(doc: BsonPtr, name: Str, value: anytype) !void {
     if (value != null) try bsonAddProp(doc, name, value);
 }
 
+/// # Converts a Zig Structure into a New BSON Document
+///
+/// - `data` - Must be a `struct`, a tagged `union`, an `optional` of either,
+/// or a pointer to one.
+///
+/// **Remarks:**
+/// - Enum tags gets converted into string.
+/// - Struct fields can nest arbitrarily deep.
+/// - Slices/arrays (except `[]const u8`) are encoded as BSON arrays.
+///
+/// **WARNING:** Return value must be freed by calling `Mongo.bsonFree()`.
+pub fn toBsonDoc(data: anytype) Error!BsonPtr {
+    const T = @TypeOf(data);
+
+    const doc = lib_mongo.bsonNew();
+    if (doc == null) return Error.OutOfMemory;
+    errdefer lib_mongo.bsonDestroy(doc);
+
+    switch (@typeInfo(T)) {
+        .@"struct", .@"union" => try bsonEncodeDoc(doc, data),
+        .optional => {
+            if (data) |v| try bsonEncodeDoc(doc, v)
+            else return Error.OperationFailed;
+        },
+        .pointer => |p| {
+            switch (p.size) {
+                .one => try bsonEncodeDoc(doc, data.*),
+                else => {
+                    const err_str = "@mongo: `{s}` is not supported by `toBsonDoc()`";
+                    @compileError(fmt.comptimePrint(err_str, .{@typeName(T)}));
+                },
+            }
+        },
+        else => {
+            const err_str = "@mongo: `{s}` is not supported by `toBsonDoc()`";
+            @compileError(fmt.comptimePrint(err_str, .{@typeName(T)}));
+        }
+    }
+
+    return doc;
+}
+
+/// # Encodes a Zig Structure or Tagged Union Into a BSON Document
+/// **Remarks:** Intended for internal use only.
+fn bsonEncodeDoc(doc: BsonPtr, data: anytype) Error!void {
+    switch (@typeInfo(@TypeOf(data))) {
+        .@"struct" => |s| {
+            if (comptime s.is_tuple) try bsonEncodeArray(doc, data)
+            else try bsonEncodeFields(doc, data);
+        },
+        .@"union" => try bsonEncodeUnion(doc, data),
+        else => {
+            const err_str = "@mongo: `{s}` is not supported by `toBsonDoc()`";
+            @compileError(fmt.comptimePrint(
+                err_str, .{@typeName(@TypeOf(data))}
+            ));
+        },
+    }
+}
+
+/// # Encodes a Zig Structure's Fields Into a BSON Document
+/// **Remarks:** Intended for internal use only.
+fn bsonEncodeFields(doc: BsonPtr, data: anytype) Error!void {
+    const s = @typeInfo(@TypeOf(data)).@"struct";
+
+    inline for (s.field_names, 0..) |name, i| {
+        if (comptime s.field_attrs[i].@"comptime") continue;
+
+        try bsonAppendValue(doc, name, @field(data, name));
+    }
+}
+
+/// # Encodes a Tagged Union Into a BSON Document
+/// **Remarks:** Intended for internal use only. Encoded as
+/// `{ "tag": payload }`, mirroring `std.json`'s tagged union form.
+fn bsonEncodeUnion(doc: BsonPtr, data: anytype) Error!void {
+    switch (data) {
+        inline else => |payload, tag| {
+            if (@TypeOf(payload) == void) {
+                const succeed = lib_mongo.bsonAddNull(doc, @tagName(tag));
+                if (!succeed) return Error.InsertionFailed;
+            } else {
+                try bsonAppendValue(doc, @tagName(tag), payload);
+            }
+        }
+    }
+}
+
+/// # Encodes a Slice/Array's Elements Into a BSON Array
+/// **Remarks:** Intended for internal use only.
+fn bsonEncodeArray(doc: BsonPtr, data: anytype) Error!void {
+    var key: [24]u8 = undefined;
+
+    for (data, 0..) |item, i| {
+        const idx = try fmt.bufPrint(&key, "{d}", .{i});
+        try bsonAppendValue(doc, idx, item);
+    }
+}
+
+/// # Encodes a Single Value Into the Given Document
+/// **Remarks:** Intended for internal use only. Mirrors the BSON decoder's
+/// semantics, so the result round-trips through `Iterator.next()`.
+fn bsonAppendValue(doc: BsonPtr, name: Str, value: anytype) Error!void {
+    const T = @TypeOf(value);
+
+    switch (@typeInfo(T)) {
+        .optional => {
+            if (value) |v| try bsonAppendValue(doc, name, v)
+            else {
+                const succeed = lib_mongo.bsonAddNull(doc, name);
+                if (!succeed) return Error.InsertionFailed;
+            }
+        },
+        .null => {
+            const succeed = lib_mongo.bsonAddNull(doc, name);
+            if (!succeed) return Error.InsertionFailed;
+        },
+        .@"struct" => |s| {
+            const sub = lib_mongo.bsonNew();
+            if (sub == null) return Error.OutOfMemory;
+            defer lib_mongo.bsonDestroy(sub);
+
+            if (comptime s.is_tuple) try bsonEncodeArray(sub, value)
+            else try bsonEncodeFields(sub, value);
+
+            if (!lib_mongo.bsonAddDoc(doc, name, sub)) return Error.InsertionFailed;
+        },
+        .@"union" => {
+            const sub = lib_mongo.bsonNew();
+            if (sub == null) return Error.OutOfMemory;
+            defer lib_mongo.bsonDestroy(sub);
+
+            try bsonEncodeUnion(sub, value);
+
+            if (!lib_mongo.bsonAddDoc(doc, name, sub)) return Error.InsertionFailed;
+        },
+        .array => {
+            const sub = lib_mongo.bsonNew();
+            if (sub == null) return Error.OutOfMemory;
+            defer lib_mongo.bsonDestroy(sub);
+
+            try bsonEncodeArray(sub, value);
+
+            if (!lib_mongo.bsonAddDoc(doc, name, sub)) return Error.InsertionFailed;
+        },
+        .pointer => |p| {
+            switch (p.size) {
+                .slice => {
+                    if (p.child != u8) {
+                        const sub = lib_mongo.bsonNew();
+                        if (sub == null) return Error.OutOfMemory;
+                        defer lib_mongo.bsonDestroy(sub);
+
+                        try bsonEncodeArray(sub, value);
+
+                        if (!lib_mongo.bsonAddDoc(doc, name, sub)) {
+                            return Error.InsertionFailed;
+                        }
+                    } else {
+                        try bsonAddProp(doc, name, value);
+                    }
+                },
+                .one => {
+                    switch (@typeInfo(p.child)) {
+                        .@"struct", .@"union" => try bsonAppendValue(doc, name, value.*),
+                        else => try bsonAddProp(doc, name, value),
+                    }
+                },
+                else => try bsonAddProp(doc, name, value),
+            }
+        },
+        else => try bsonAddProp(doc, name, value),
+    }
+}
+
 /// # Converts BSON Document into a JSON-Formatted String
 /// **Remarks:** Intended to be used for debugging purposes.
 ///

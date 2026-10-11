@@ -8,29 +8,44 @@ const Mongo = @import("mongo").Mongo;
 
 ## Initial Setup
 
-Following snippet will initialize a database connection the specified pool size.
+Following snippet will initialize a database connection with the specified pool size.
 
 ```zig
 const uri = "mongodb://localhost:27017/?maxPoolSize=50";
-const mongo_db = try Mongo.init(true, uri, "your_example_db");
+
+var mongo_db = try Mongo.init(io, true, uri, "your_example_db");
 defer mongo_db.deinit();
 ```
 
+**Remarks:** The `io` handle comes from Zig's `std.process.Init` (e.g. `pub fn main(init: std.process.Init)`), and the boolean enables debug logging.
+
 ## Connect Client to a Database
 
-By default, Mongo will connect to the database from the `init()`.
+By default, Mongo will connect to the database given in `init()`.
 
 ```zig
-const db = mongo_db.database();
+const db = try mongo_db.database();
 defer db.free();
 ```
 
-You can also connect client to a specified database with:
+You can also connect to a specified database with:
 
 ```zig
-const db = mongo_db.databaseWith("your_custom_db")
+const db = try mongo_db.databaseWith("your_custom_db");
 defer db.free();
 ```
+
+## Resetting the Connection Pool
+
+**CAUTION:** Every outstanding database handle (borrowed client) must be freed
+before resetting, otherwise it is an undefined behavior.
+
+```zig
+try mongo_db.resetPool();
+```
+
+**Remarks:** Concurrent `database()` calls are blocked until the reset is done.
+Useful when a connection pool becomes unusable after a driver failure.
 
 ## Working with a Collection
 
@@ -41,10 +56,11 @@ const coll = db.collection("foo");
 defer coll.free();
 ```
 
-Let's check if a collection exists on a database.
+Let's check if a collection exists on a database. The call fails with an error
+when the existence check itself can not be performed.
 
 ```zig
-const result = db.hasCollection("bar");
+const result = try db.hasCollection("bar");
 std.debug.print("Collection exists: {}\n", .{result});
 ```
 
@@ -52,6 +68,80 @@ You can delete an entire collection with:
 
 ```zig
 try coll.drop();
+```
+
+And rename it with:
+
+```zig
+try coll.rename("your_custom_db", "new_name");
+```
+
+**CAUTION:** `db.drop()` deletes the entire database and can not be undone.
+
+## Building Documents
+
+Documents are BSON documents. You can build them from formatted JSON or
+directly from Zig structures.
+
+### From Formatted JSON
+
+```zig
+const query = try Mongo.bsonBuild(&mongo_db, null,
+    \\ {{ "name": "{s}" }}
+    ,.{"john"}
+);
+defer Mongo.bsonFree(query);
+```
+
+**Remarks:** `{{` `}}` escapes are required because the input is a Zig format
+string. For input larger than 4096 bytes, use `bsonBuildLarge()` (requires an
+allocator):
+
+```zig
+const query = try Mongo.bsonBuildLarge(&mongo_db, heap, null,
+    \\ {{ "name": "{s}" }}
+    ,.{"john"}
+);
+defer Mongo.bsonFree(query);
+```
+
+### From Zig Structures
+
+`toBsonDoc()` converts a Zig structure directly into a BSON document without
+any JSON round-trip.
+
+```zig
+const doc = try Mongo.toBsonDoc(.{ .name = "john", .age = 31 });
+defer Mongo.bsonFree(doc);
+```
+
+- Nested structures become sub-documents, slices/arrays become BSON arrays and
+tagged unions are stored as `{ "tag": payload }`.
+- Enum tags are stored as strings and optionals are stored as `null`.
+
+### Appending Properties
+
+```zig
+const doc = Mongo.bsonNew();
+defer Mongo.bsonFree(doc);
+
+try Mongo.bsonAddProp(doc, "name", "john");
+try Mongo.bsonAddProp(doc, "age", 31);
+
+const middle_name: ?[]const u8 = null;
+try Mongo.bsonSetProp(doc, "middle_name", middle_name); // NOP when null
+```
+
+**Remarks:** Enum tags are converted into strings, and `bsonSetProp()` is a
+NO-OP when the value is `null`.
+
+### Debug JSON
+
+```zig
+const json = try Mongo.bsonToJsonString(doc);
+defer Mongo.bsonFreeJson(json);
+
+std.debug.print("{s}\n", .{json});
 ```
 
 ## CRUD Operations on a Collection
@@ -72,11 +162,11 @@ Following example snippet will return matched documents progressively.
 ```zig
 const User = struct { name: []const u8, age: u8 };
 
-const cursor = coll.find(null, null);
+const cursor = try coll.find(null, null);
 defer cursor.free();
 
 while (try cursor.next(heap, User)) |doc| {
-    defer jsonic.free(heap, doc) catch unreachable;
+    defer jsonic.free(heap, doc);
 
     std.debug.print("{s}\n", .{doc.name});
     std.debug.print("{d}\n", .{doc.age});
@@ -85,7 +175,7 @@ while (try cursor.next(heap, User)) |doc| {
 
 ### Insert Document
 
-Following example snippet will insert one or more document on a collection.
+Following example snippet will insert one or more documents on a collection.
 
 ```zig
 const User = struct { name: []const u8, age: u8 };
@@ -105,9 +195,35 @@ const users = [_]User {
 try coll.insertMany(heap, users[0..], null);
 ```
 
+### Update Document
+
+Following example snippet will update one or more documents on a collection.
+Filters and updates can be built either from formatted JSON or from Zig
+structures with `toBsonDoc()`.
+
+```zig
+const filter = try Mongo.toBsonDoc(.{ .name = "john" });
+defer Mongo.bsonFree(filter);
+
+const update = try Mongo.bsonBuild(&mongo_db, null,
+    \\ {{ "$set": {{ "age": {d} }} }}
+    ,.{56}
+);
+defer Mongo.bsonFree(update);
+
+const matched_1 = try coll.updateOne(filter, update, null);
+std.debug.print("Matched {} document\n", .{matched_1});
+
+const matched_2 = try coll.updateMany(filter, update, null);
+std.debug.print("Matched {} documents\n", .{matched_2});
+```
+
+**Remarks:** `updateOne()` and `updateMany()` return the number of **matched**
+documents.
+
 ### Delete Document
 
-Following example snippet will delete one or more document on a collection.
+Following example snippet will delete one or more documents on a collection.
 
 ```zig
 const query = try Mongo.bsonBuild(&mongo_db, null,
@@ -129,29 +245,37 @@ std.debug.print("Deleted {d} documents\n", .{count_2});
 
 **Remarks:** Always use the above format for building any query such as **filter**, **options**, **pipeline** etc.
 
-### Update Document
+## ACID Session
 
-Following example snippet will update one or more document on a collection.
+Following example snippet pattern should be used to perform session transactions for multiple collections.
 
 ```zig
+const acid = try db.session();
+defer acid.free();
+
+try acid.start();
+errdefer acid.end(.Abort) catch unreachable;
+
+const opts = Mongo.bsonNew();
+defer Mongo.bsonFree(opts);
+
+try acid.append(opts);
+
 const query = try Mongo.bsonBuild(&mongo_db, null,
-    \\ {{ "age": {d} }}
-    ,.{31}
+    \\ {{ "name": "{s}" }}
+    ,.{"john"}
 );
 defer Mongo.bsonFree(query);
 
-const update = try Mongo.bsonBuild(
-    \\ {{ "$set": {{ "age": {d} }} }}
-    ,.{56}
-);
-defer Mongo.bsonFree(update);
+// Deletes a single document as ACID Session
 
-const result_1 = try coll.updateOne(query, update, null);
-std.debug.print("Modified {} document\n", .{result_1});
+const count = try coll.deleteOne(query, opts);
+std.debug.print("ACID - Deleted {d} document\n", .{count});
 
-const result_2 = try coll.updateMany(query, update, null);
-std.debug.print("Modified {} documents\n", .{result_2});
+if (count == 1) try acid.end(.Commit) else try acid.end(.Abort);
 ```
+
+## Working with Indexes
 
 ### Create an Index
 
@@ -182,21 +306,21 @@ try coll.deleteIndex("name_index");
 Following example snippet will show all available indexes on a collection.
 
 ```zig
-const cursor = coll.findIndexes();
+const cursor = try coll.findIndexes();
 defer cursor.free();
 
 while (try cursor.next(heap, Mongo.IndexData)) |doc| {
-    defer jsonic.free(heap, doc) catch unreachable;
+    defer jsonic.free(heap, doc);
     std.debug.print("v: {} | name: {s}\n", .{doc.v, doc.name});
 }
 ```
 
-### Document Aggregation
+## Document Aggregation
 
 Following example snippet will aggregate & project documents from a collection.
 
 ```zig
-const Info = struct { uuid: Str, name: Str, created_at: i64 };
+const Info = struct { uuid: []const u8, name: []const u8, created_at: i64 };
 
 const pipeline = try Mongo.bsonBuild(&mongo_db, null,
     \\ [{{
@@ -222,45 +346,15 @@ const pipeline = try Mongo.bsonBuild(&mongo_db, null,
 );
 defer Mongo.bsonFree(pipeline);
 
-const cursor = coll.aggregate(pipeline);
+const cursor = try coll.aggregate(pipeline);
 defer cursor.free();
 
 while (try cursor.next(heap, Info)) |doc| {
-    defer jsonic.free(heap, doc) catch unreachable;
+    defer jsonic.free(heap, doc);
 
     std.debug.print(
         "uuid: {s}\n name: {s}\n created_at {}\n",
         .{doc.uuid, doc.name, doc.created_at}
     );
 }
-```
-
-### ACID Session
-
-Following example snippet pattern should be used to perform session transactions for multiple collections.
-
-```zig
-const acid = try db.session();
-defer acid.free();
-
-try acid.start();
-errdefer acid.end(.Abort) catch unreachable;
-
-const opts = Mongo.bsonNew();
-defer Mongo.bsonFree(opts);
-
-try acid.append(opts);
-
-const query = try Mongo.bsonBuild(&mongo_db, null,
-    \\ {{ "name": "{s}" }}
-    ,.{"john"}
-);
-defer Mongo.bsonFree(query);
-
-// Deletes a single document as ACID Session
-
-const count = try coll.deleteOne(query, opts);
-std.debug.print("ACID - Deleted {d} document\n", .{count});
-
-if (count == 1) try acid.end(.Commit) else try acid.end(.Abort);
 ```

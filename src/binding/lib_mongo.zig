@@ -438,6 +438,16 @@ pub fn bsonAddDoc(doc: [*c]Bson, name: Str, value: [*c]Bson) bool {
     );
 }
 
+/// # Adds a New Array Property to the Given Document
+pub fn bsonAddArray(doc: [*c]Bson, name: Str, value: [*c]Bson) bool {
+    return bson.bson_append_array(
+        @ptrCast(doc),
+        @as(StrC, name.ptr),
+        @intCast(name.len),
+        @ptrCast(value)
+    );
+}
+
 /// # Adds a New Null Property to the Given Document
 pub fn bsonAddNull(doc: [*c]Bson, name: Str) bool {
     return bson.bson_append_null(

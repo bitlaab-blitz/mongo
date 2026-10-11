@@ -25,7 +25,32 @@ Here we write upgrading notes and make them as straightforward as possible.
 
 ## [v1.7.0] - 2026-10-11
 
-TODO: write the changelog.
+Major performance and correctness overhaul: direct BSON encoding/decoding, copy-free property appends and several memory/race bug fixes, better documentation, and Zig-0.17.0 version support.
+
+### Added
+
+- `toBsonDoc()` - Converts a Zig structure (including nested structs, arrays, tagged unions and optionals) directly into a BSON document.
+- `bsonFreeJson()` - Frees strings returned by `bsonToJsonString()`.
+- Direct BSON-to-structure cursor decoding - `Iterator.next()` no longer converts documents through JSON; supports nested structs, arrays, tagged unions and `jsonic`-style field defaults.
+
+### Changed
+
+- `bsonAddProp()` and `bsonSetProp()` no longer require an allocator; keys and string values are appended by length without intermediate copies.
+- `bsonToJsonString()` no longer requires an allocator and returns a driver-owned string; free it with `bsonFreeJson()` instead of `heap.free()`.
+- `bsonBuild()` formatted input limit is now 4096 bytes (was 8192); use `bsonBuildLarge()` for larger input.
+- Driver initialization/cleanup is reference-counted, allowing multiple `Mongo` instances to coexist.
+- `indexModelCreate()` builds key/option documents directly instead of parsing JSON.
+
+### Fixed
+
+- Double-free / use-after-free in `Iterator.next()` (documents are cursor-owned and ephemeral).
+- Memory leak of the `count_documents()` reply.
+- Memory leaks in `bsonBuild()` / `bsonBuildLarge()` error paths.
+- Silent empty-document bug in `bsonBuild()` when parsing failed with debug mode disabled.
+- Race condition in `resetPool()` (pool access is now mutex-protected).
+- `find()`, `findIndexes()` and `aggregate()` now return an error instead of a null cursor.
+- `hasCollection()` now distinguishes a failed existence check from a missing collection.
+- `drop()` now reports `OperationFailed` instead of the misleading `DoesNotExists`.
 
 ## [v1.6.1] - 2026-03-29
 

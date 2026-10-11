@@ -1,5 +1,136 @@
 # Filter Query Guide
 
+Quick reference for frequently used queries with ready-to-use Zig snippets,
+followed by the full operator and options tables.
+
+## Quick Reference (Copy-Paste Recipes)
+
+Filters and options are BSON documents. Build them from formatted JSON with
+`bsonBuild()` (escape `{` `}` as `{{` `}`), or from Zig structures with
+`toBsonDoc()` (no escaping needed).
+
+### Simple Equality
+
+```zig
+const flt = try Mongo.toBsonDoc(.{ .status = "A" });
+
+const cursor = try coll.find(flt, null);
+defer cursor.free();
+```
+
+### Comparison Range
+
+```zig
+const flt = try Mongo.bsonBuild(&mongo_db, null,
+    \\ {{ "age": {{ "$gte": {d}, "$lt": {d} }} }}
+    ,.{18, 65}
+);
+```
+
+### Combining Conditions (`$and` / `$or`)
+
+```zig
+const flt = try Mongo.bsonBuild(&mongo_db, null,
+    \\ {{ "$or": [
+    \\      {{ "status": "A" }},
+    \\      {{ "age": {{ "$lt": {d} }} }}
+    \\ ] }}
+    ,.{30}
+);
+```
+
+### Membership Test (`$in`)
+
+```zig
+const flt = try Mongo.bsonBuild(&mongo_db, null,
+    \\ {{ "status": {{ "$in": ["A", "B"] }} }}
+    ,.{}
+);
+```
+
+### Case-Insensitive Search (`$regex`)
+
+```zig
+const flt = try Mongo.bsonBuild(&mongo_db, null,
+    \\ {{ "name": {{ "$regex": "^{s}", "$options": "i" }} }}
+    ,.{"john"}
+);
+```
+
+### Field Presence and Type
+
+```zig
+const flt = try Mongo.bsonBuild(&mongo_db, null,
+    \\ {{ "middle_name": {{ "$exists": true }}, "score": {{ "$type": "int" }} }}
+    ,.{}
+);
+```
+
+### Date Range
+
+```zig
+const flt = try Mongo.bsonBuild(&mongo_db, null,
+    \\ {{ "created_at": {{
+    \\      "$gte": {{ "$date": "{s}" }},
+    \\      "$lt": {{ "$date": "{s}" }}
+    \\ }} }}
+    ,.{"2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z"}
+);
+```
+
+### Nested Fields
+
+```zig
+// Matches { "address": { "city": "nyc" } } with dotted keys
+
+const flt = try Mongo.toBsonDoc(.{ .@"address.city" = "nyc" });
+```
+
+### Sorting & Pagination
+
+```zig
+const flt = try Mongo.toBsonDoc(.{ .status = "A" });
+
+const opts = try Mongo.bsonBuild(&mongo_db, null,
+    \\ {{ "sort": {{ "age": -1 }}, "limit": {d}, "skip": {d} }}
+    ,.{10, 0}
+);
+
+const cursor = try coll.find(flt, opts);
+defer cursor.free();
+```
+
+### Count with a Filter
+
+```zig
+const flt = try Mongo.toBsonDoc(.{ .status = "A" });
+
+const result = try coll.count(flt, null);
+std.debug.print("Found: {} documents\n", .{result});
+```
+
+### Upsert on Update
+
+```zig
+const flt = try Mongo.toBsonDoc(.{ .name = "john" });
+
+const update = try Mongo.bsonBuild(&mongo_db, null,
+    \\ {{ "$set": {{ "age": {d} }} }}
+    ,.{56}
+);
+defer Mongo.bsonFree(update);
+
+const opts = try Mongo.bsonBuild(&mongo_db, null,
+    \\ {{ "upsert": true }}
+    ,.{}
+);
+defer Mongo.bsonFree(opts);
+
+const matched = try coll.updateOne(flt, update, opts);
+```
+
+# Filter Operators
+
 Following example shows commonly used filter query operators with descriptions and usage examples.
 
 ## Equality and Comparison Operators
@@ -48,8 +179,25 @@ Following example shows commonly used filter query operators with descriptions a
 | `$elemMatch`   | Matches documents with array fields matching multiple conditions. | `{ "results": { "$elemMatch": { "$gt": 80, "$lt": 85 } } }` |
 | `$size`        | Matches arrays with the specified number of elements.      | `{ "tags": { "$size": 3 } }`                             |
 
-**Note**: All examples use MongoDB Extended JSON format. Make sure to escape `{` `}` with `{{` `}}` in Zig.
+**Note**: All examples use MongoDB Extended JSON format. Make sure to escape `{` `}` with `{{` `}}` when using `bsonBuild()` in Zig. Filters built with `toBsonDoc()` need no escaping.
 
+# Update Operators
+
+Following operators are frequently used inside update documents (e.g. for `updateOne()` / `updateMany()`).
+
+| Operator       | Description                                                | Example                                                  |
+|----------------|------------------------------------------------------------|----------------------------------------------------------|
+| `$set`         | Sets the value of a field.                                 | `{ "$set": { "status": "A" } }`                          |
+| `$unset`       | Removes the specified field.                               | `{ "$unset": { "middle_name": "" } }`                    |
+| `$inc`         | Increments a field by a specified amount.                  | `{ "$inc": { "age": 1 } }`                               |
+| `$mul`         | Multiplies a field by a specified amount.                  | `{ "$mul": { "price": 1.25 } }`                          |
+| `$min`         | Updates only when the new value is lower.                  | `{ "$min": { "low": 10 } }`                              |
+| `$max`         | Updates only when the new value is higher.                 | `{ "$max": { "high": 100 } }`                            |
+| `$push`        | Appends a value to an array field.                         | `{ "$push": { "tags": "new" } }`                         |
+| `$pull`        | Removes matching elements from an array.                   | `{ "$pull": { "tags": "obsolete" } }`                    |
+| `$addToSet`    | Adds a value to an array only when it is not present.      | `{ "$addToSet": { "tags": "unique" } }`                  |
+| `$rename`      | Renames a field.                                           | `{ "$rename": { "nm": "name" } }`                        |
+| `$currentDate` | Sets a field to the current date.                          | `{ "$currentDate": { "last_modified": true } }`          |
 
 # Options Query Guide
 
@@ -100,3 +248,13 @@ Following example shows common options available for MongoDB query operations (e
 | `min`          | Document | Specifies lower bound index key values for the query.                      | `{ "min": { "age": 18 } }`               |
 | `returnKey`    | Boolean  | Returns only index keys in result documents.                               | `{ "returnKey": true }`                  |
 | `showRecordId` | Boolean  | Includes the internal storage engine record ID.                            | `{ "showRecordId": true }`              |
+
+---
+
+## Write Options
+
+| Option         | Type     | Description                                                                 | Example                                  |
+|----------------|----------|-----------------------------------------------------------------------------|------------------------------------------|
+| `upsert`       | Boolean  | Inserts a new document when no document matches the filter (update ops).    | `{ "upsert": true }`                     |
+| `ordered`      | Boolean  | When `true`, stops a bulk write on the first failure.                       | `{ "ordered": true }`                    |
+| `bypassDocumentValidation` | Boolean | Skips schema validation on insert/update.                  | `{ "bypassDocumentValidation": true }`   |
