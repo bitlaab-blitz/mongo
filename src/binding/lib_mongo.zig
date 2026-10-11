@@ -7,6 +7,7 @@ const bson = @import("bson");
 const mongoc = @import("mongoc");
 
 
+const Str = []const u8;
 const StrZ = [:0]const u8;
 const StrC = [*c]const u8;
 
@@ -24,6 +25,7 @@ pub const Collection = ?*mongoc.mongoc_collection_t;
 pub const Cursor = ?*mongoc.mongoc_cursor_t;
 pub const Session = ?*mongoc.mongoc_client_session_t;
 pub const IndexModel = ?*mongoc.mongoc_index_model_t;
+pub const Iter = mongoc.bson_iter_t;
 
 pub const LogHandle = mongoc.mongoc_log_func_t;
 
@@ -402,10 +404,10 @@ pub fn bsonValidate(doc: [*c]Bson) ?usize {
 }
 
 /// # Parses a JSON String into a BSON Document
-pub fn bsonFromJSON(doc: [*c]Bson, json_data: StrZ, err: *BsonError) bool {
+pub fn bsonFromJSON(doc: [*c]Bson, json_data: Str, err: *BsonError) bool {
     return bson.bson_init_from_json(
         @ptrCast(doc),
-        @as(StrC, json_data),
+        @as(StrC, json_data.ptr),
         @intCast(json_data.len),
         @ptrCast(err)
     );
@@ -427,72 +429,72 @@ pub fn bsonToJSON(doc: BsonC) [*c]u8 {
 }
 
 /// # Adds a New Sub Document to the Given Parent Document
-pub fn bsonAddDoc(doc: [*c]Bson, name: StrZ, value: [*c]Bson) bool {
+pub fn bsonAddDoc(doc: [*c]Bson, name: Str, value: [*c]Bson) bool {
     return bson.bson_append_document(
         @ptrCast(doc),
-        @as(StrC, name),
+        @as(StrC, name.ptr),
         @intCast(name.len),
         @ptrCast(value),
     );
 }
 
 /// # Adds a New Null Property to the Given Document
-pub fn bsonAddNull(doc: [*c]Bson, name: StrZ) bool {
+pub fn bsonAddNull(doc: [*c]Bson, name: Str) bool {
     return bson.bson_append_null(
         @ptrCast(doc),
-        @as(StrC, name),
+        @as(StrC, name.ptr),
         @intCast(name.len)
     );
 }
 
 /// # Adds a New Boolean Property to the Given Document
-pub fn bsonAddBool(doc: [*c]Bson, name: StrZ, value: bool) bool {
+pub fn bsonAddBool(doc: [*c]Bson, name: Str, value: bool) bool {
     return bson.bson_append_bool(
         @ptrCast(doc),
-        @as(StrC, name),
+        @as(StrC, name.ptr),
         @intCast(name.len),
         value,
     );
 }
 
 /// # Adds a New Int32 Number Property to the Given Document
-pub fn bsonAddInt32(doc: [*c]Bson, name: StrZ, value: i32) bool {
+pub fn bsonAddInt32(doc: [*c]Bson, name: Str, value: i32) bool {
     return bson.bson_append_int32(
         @ptrCast(doc),
-        @as(StrC, name),
+        @as(StrC, name.ptr),
         @intCast(name.len),
         value,
     );
 }
 
 /// # Adds a New Int64 Number Property to the Given Document
-pub fn bsonAddInt64(doc: [*c]Bson, name: StrZ, value: i64) bool {
+pub fn bsonAddInt64(doc: [*c]Bson, name: Str, value: i64) bool {
     return bson.bson_append_int64(
         @ptrCast(doc),
-        @as(StrC, name),
+        @as(StrC, name.ptr),
         @intCast(name.len),
         value,
     );
 }
 
 /// # Adds a New Float64 Number Property to the Given Document
-pub fn bsonAddFloat64(doc: [*c]Bson, name: StrZ, value: f64) bool {
+pub fn bsonAddFloat64(doc: [*c]Bson, name: Str, value: f64) bool {
     return bson.bson_append_double(
         @ptrCast(doc),
-        @as(StrC, name),
+        @as(StrC, name.ptr),
         @intCast(name.len),
         value,
     );
 }
 
 /// # Adds a New String Property to the Given Document
-pub fn bsonAddString(doc: [*c]Bson, name: StrZ, value: StrZ) bool {
+pub fn bsonAddString(doc: [*c]Bson, name: Str, value: Str) bool {
     return bson.bson_append_utf8(
         @ptrCast(doc),
-        @as(StrC, name),
+        @as(StrC, name.ptr),
         @intCast(name.len),
-        @as(StrC, value),
-        @intCast(value.len),
+        @as(StrC, value.ptr),
+        @intCast(value.len)
     );
 }
 
@@ -513,3 +515,80 @@ pub fn bsonGetNumeric(doc: BsonC, key: StrZ) ?i64 {
 
 /// # Frees Strings or Memory Blocks
 pub fn bsonFree(data: ?*anyopaque) void { bson.bson_free(data); }
+
+//##############################################################################
+//# BSON ITERATION ------------------------------------------------------------#
+//##############################################################################
+
+/// # Possible Types of a BSON Element
+pub const Tag = enum {
+    utf8,
+    double,
+    document,
+    array,
+    boolean,
+    int32,
+    int64,
+    nul,
+    other
+};
+
+/// # Initializes an Iterator Over a BSON Document
+pub fn iterInit(iter: *Iter, doc: BsonC) bool {
+    return bson.bson_iter_init(@ptrCast(iter), @ptrCast(doc));
+}
+
+/// # Advances the Iterator to the Next Element
+pub fn iterNext(iter: *Iter) bool {
+    return bson.bson_iter_next(@ptrCast(iter));
+}
+
+/// # Positions a New Iterator Over the Current Document/Array Element
+pub fn iterRecurse(iter: *const Iter, child: *Iter) bool {
+    return bson.bson_iter_recurse(@ptrCast(iter), @ptrCast(child));
+}
+
+/// # Returns the Type Tag of the Current Element
+pub fn iterTypeTag(iter: *const Iter) Tag {
+    return switch (bson.bson_iter_type(@ptrCast(iter))) {
+        bson.BSON_TYPE_UTF8 => .utf8,
+        bson.BSON_TYPE_DOUBLE => .double,
+        bson.BSON_TYPE_DOCUMENT => .document,
+        bson.BSON_TYPE_ARRAY => .array,
+        bson.BSON_TYPE_BOOL => .boolean,
+        bson.BSON_TYPE_INT32 => .int32,
+        bson.BSON_TYPE_INT64 => .int64,
+        bson.BSON_TYPE_NULL => .nul,
+        else => .other
+    };
+}
+
+/// # Returns the Key of the Current Element
+pub fn iterKey(iter: *const Iter) StrC {
+    return bson.bson_iter_key(@ptrCast(iter));
+}
+
+/// # Returns the Current Element's UTF-8 String Value
+/// **Remarks:** Only valid when the type tag is `utf8`.
+pub fn iterUtf8(iter: *const Iter) Str {
+    const str = bson.bson_iter_utf8(@ptrCast(iter), null);
+    return std.mem.span(@as([*:0]const u8, @ptrCast(str)));
+}
+
+/// # Returns the Current Element's Boolean Value
+/// **Remarks:** Only valid when the type tag is `bool`.
+pub fn iterBool(iter: *const Iter) bool {
+    return bson.bson_iter_bool(@ptrCast(iter));
+}
+
+/// # Returns the Current Element's Numeric Value Coerced into an Int64
+/// **Remarks:** Only valid for numeric type tags.
+pub fn iterAsInt64(iter: *const Iter) i64 {
+    return bson.bson_iter_as_int64(@ptrCast(iter));
+}
+
+/// # Returns the Current Element's Numeric Value Coerced into a Double
+/// **Remarks:** Only valid for numeric type tags.
+pub fn iterAsDouble(iter: *const Iter) f64 {
+    return bson.bson_iter_as_double(@ptrCast(iter));
+}

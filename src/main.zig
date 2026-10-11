@@ -138,25 +138,25 @@ pub fn main(init: std.process.Init) !void {
         const q = Mongo.bsonNew();
         defer Mongo.bsonFree(q);
 
-        try Mongo.bsonAddProp(heap, q, "num_i32", 2_147_483_647);
-        try Mongo.bsonAddProp(heap, q, "num_i64", 2_147_483_648);
+        try Mongo.bsonAddProp(q, "num_i32", 2_147_483_647);
+        try Mongo.bsonAddProp(q, "num_i64", 2_147_483_648);
 
         const Foo = enum { Bar, Baz };
         const foo = Foo.Bar;
 
-        try Mongo.bsonAddProp(heap, q, "name", "cool cat");
-        try Mongo.bsonAddProp(heap, q, "tag1", foo);
-        try Mongo.bsonAddProp(heap, q, "tag2", .Baz);
+        try Mongo.bsonAddProp(q, "name", "cool cat");
+        try Mongo.bsonAddProp(q, "tag1", foo);
+        try Mongo.bsonAddProp(q, "tag2", .Baz);
 
         const bar1: ?i32 = null;
         const bar2: ?i32 = 5000;
 
-        try Mongo.bsonSetProp(heap, q, "bar1", bar1);
-        try Mongo.bsonSetProp(heap, q, "bar2", bar2);
-        try Mongo.bsonSetProp(heap, q, "bar3", null);
+        try Mongo.bsonSetProp(q, "bar1", bar1);
+        try Mongo.bsonSetProp(q, "bar2", bar2);
+        try Mongo.bsonSetProp(q, "bar3", null);
 
-        const out = try Mongo.bsonToJsonString(heap, q);
-        defer heap.free(out);
+        const out = try Mongo.bsonToJsonString(q);
+        defer Mongo.bsonFreeJson(out);
 
         std.debug.print("{s}\n", .{out});
     }

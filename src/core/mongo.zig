@@ -11,7 +11,6 @@ const Allocator = mem.Allocator;
 
 const jsonic = @import("jsonic");
 const StaticJSON = jsonic.StaticJSON;
-const DynamicJSON = jsonic.DynamicJSON;
 
 const lib_mongo = @import("../binding/lib_mongo.zig");
 
@@ -73,10 +72,7 @@ pub fn init(io: Io, mode: bool, uri_string: StrZ, db_name: StrZ) Error!Self {
     const uri = lib_mongo.newUri(uri_string, &err_res);
 
     if (uri == null) {
-        if (mode) {
-            const fmt_str = "Code - {d} | {s}";
-            log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
-        }
+        logBsonErr(.err, mode, &err_res);
 
         return Error.InvalidUri;
     }
@@ -121,17 +117,7 @@ pub fn resetPool(self: *Self) !void {
 ///
 /// **WARNING:** Return value must be freed by calling `Database.free()`.
 pub fn database(self: *Self) !Database {
-    try self.pool_mutex.lock(self.io);
-    const c = lib_mongo.clientPoolPop(self.pool);
-    self.pool_mutex.unlock(self.io);
-
-    const d = lib_mongo.clientGetDatabase(c, self.db_name);
-    return .{
-        .debug_mode = self.debug_mode,
-        .parent = self,
-        .client = c,
-        .instance = d
-    };
+    return databaseWith(self, self.db_name);
 }
 
 /// # Returns a New Database Handle
@@ -157,33 +143,19 @@ pub fn bsonNew() BsonPtr { return lib_mongo.bsonNew(); }
 /// **WARNING:** Return value must be freed by calling `Mongo.bsonFree()`.
 ///
 /// - `doc` - When **null**, builds from an empty BSON document
+///
+/// **Remarks:** Formatted data can be up to **4096** bytes, use
+/// `bsonBuildLarge()` for bigger input.
 pub fn bsonBuild(
     self: *const Self,
     doc: ?BsonPtr,
     comptime fmt_str: Str,
     args: anytype
 ) Error!BsonPtr {
-    var buff: [8192]u8 = undefined;
-    const src = try std.fmt.bufPrintSentinel(&buff, fmt_str, args, 0);
+    var buff: [4096]u8 = undefined;
+    const src = try std.fmt.bufPrint(&buff, fmt_str, args);
 
-    const bson = doc orelse lib_mongo.bsonNew();
-    // Only clean up when the document is owned by this function
-    errdefer if (doc == null) lib_mongo.bsonDestroy(bson);
-
-    var err_res: lib_mongo.BsonError = undefined;
-
-    if (!lib_mongo.bsonFromJSON(bson, src, &err_res)) {
-        if (self.debug_mode) {
-            const err_str = "Code - {d} | {s} \n {s}";
-            log.err(err_str, .{err_res.code, @as(StrC, &err_res.message), src});
-        }
-
-        return Error.InvalidInputString;
-    }
-
-    if (lib_mongo.bsonValidate(bson) == null) return Error.InvalidInputString;
-
-    return bson;
+    return bsonParse(self, doc, src);
 }
 
 /// # Builds BSON Document from a Formatted JSON String
@@ -199,9 +171,19 @@ pub fn bsonBuildLarge(
     comptime fmt_str: Str,
     args: anytype
 ) Error!BsonPtr {
-    const src = try std.fmt.allocPrintSentinel(heap, fmt_str, args, 0);
+    const src = try std.fmt.allocPrint(heap, fmt_str, args);
     defer heap.free(src);
 
+    return bsonParse(self, doc, src);
+}
+
+/// # Parses a JSON-Formatted String into a BSON Document
+/// **Remarks:** Intended for internal use only.
+fn bsonParse(
+    self: *const Self,
+    doc: ?BsonPtr,
+    src: Str
+) Error!BsonPtr {
     const bson = doc orelse lib_mongo.bsonNew();
     // Only clean up when the document is owned by this function
     errdefer if (doc == null) lib_mongo.bsonDestroy(bson);
@@ -231,35 +213,29 @@ pub fn bsonAddDoc(doc: BsonPtr, name: StrZ, value: BsonPtr) !void {
 /// # Adds a New Property to the Given Document
 ///
 /// **Remarks:**
-/// - Any heap allocations are freed automatically.
 /// - Enum tags gets converted into string.
 /// - Passing optional value is supported.
 pub fn bsonAddProp(
-    heap: Allocator,
     doc: BsonPtr,
     name: Str,
     value: anytype
 ) !void {
     const T = @TypeOf(value);
 
-    const key = try heap.allocSentinel(u8, name.len, 0);
-    mem.copyForwards(u8, key, name);
-    defer heap.free(key);
-
     switch (@typeInfo(T)) {
         .optional => {
-            if (value) |v| try bsonAddProp(heap, doc, name, v)
+            if (value) |v| try bsonAddProp(doc, name, v)
             else {
-                const succeed = lib_mongo.bsonAddNull(doc, key);
+                const succeed = lib_mongo.bsonAddNull(doc, name);
                 if (!succeed) return Error.InsertionFailed;
             }
         },
         .null => {
-            const succeed = lib_mongo.bsonAddNull(doc, key);
+            const succeed = lib_mongo.bsonAddNull(doc, name);
             if (!succeed) return Error.InsertionFailed;
         },
         .bool => {
-            const succeed = lib_mongo.bsonAddBool(doc, key, value);
+            const succeed = lib_mongo.bsonAddBool(doc, name, value);
             if (!succeed) return Error.InsertionFailed;
         },
         .int, .comptime_int => {
@@ -271,25 +247,25 @@ pub fn bsonAddProp(
             if (value >= min_i32 and value <= max_i32) {
 
                 const succeed = lib_mongo.bsonAddInt32(
-                    doc, key, @intCast(value)
+                    doc, name, @intCast(value)
                 );
                 if (!succeed) return Error.InsertionFailed;
             } else if (value >= min_i64 and value <= max_i64) {
                 const succeed = lib_mongo.bsonAddInt64(
-                    doc, key, @intCast(value)
+                    doc, name, @intCast(value)
                 );
                 if (!succeed) return Error.InsertionFailed;
             } else {
-                const err_str = "mongo: `{s}` in BSON append is too big";
+                const err_str = "@mongo: `{s}` in BSON append is too big";
                 @compileError(fmt.comptimePrint(err_str, .{@typeName(T)}));
             }
         },
         .float, .comptime_float => {
-            const succeed = lib_mongo.bsonAddFloat64(doc, key, value);
+            const succeed = lib_mongo.bsonAddFloat64(doc, name, value);
             if (!succeed) return Error.InsertionFailed;
         },
         .@"enum", .@"enum_literal" => {
-            const succeed = lib_mongo.bsonAddString(doc, key, @tagName(value));
+            const succeed = lib_mongo.bsonAddString(doc, name, @tagName(value));
             if (!succeed) return Error.InsertionFailed;
         },
         .pointer => |p| {
@@ -303,11 +279,7 @@ pub fn bsonAddProp(
                         ));
                     }
 
-                    const val = try heap.allocSentinel(u8, value.len, 0);
-                    mem.copyForwards(u8, val, value);
-                    defer heap.free(val);
-
-                    const succeed = lib_mongo.bsonAddString(doc, key, val);
+                    const succeed = lib_mongo.bsonAddString(doc, name, value);
                     if (!succeed) return Error.InsertionFailed;
                 },
                 .many => {
@@ -319,7 +291,9 @@ pub fn bsonAddProp(
                         ));
                     }
 
-                    const succeed = lib_mongo.bsonAddString(doc, key, value);
+                    const succeed = lib_mongo.bsonAddString(
+                        doc, name, mem.span(value)
+                    );
                     if (!succeed) return Error.InsertionFailed;
                 },
                 .one => {
@@ -341,7 +315,7 @@ pub fn bsonAddProp(
                         },
                     }
 
-                    const succeed = lib_mongo.bsonAddString(doc, key, value);
+                    const succeed = lib_mongo.bsonAddString(doc, name, value);
                     if (!succeed) return Error.InsertionFailed;
                 },
                 else => {
@@ -358,33 +332,47 @@ pub fn bsonAddProp(
 }
 
 /// # Adds a New Property to the Given Document
-/// **Remarks:** Same as `bsonAddProp()`, except NOP when value is **null**.
-pub fn bsonSetProp(heap: Allocator,
-    doc: BsonPtr,
-    name: Str,
-    value: anytype
-) !void {
-    if (value != null) try bsonAddProp(heap, doc, name, value);
+/// **Remarks:** Same as `bsonAddProp()`, except NO-OP when value is **null**.
+pub fn bsonSetProp(doc: BsonPtr, name: Str, value: anytype) !void {
+    if (value != null) try bsonAddProp(doc, name, value);
 }
 
 /// # Converts BSON Document into a JSON-Formatted String
 /// **Remarks:** Intended to be used for debugging purposes.
 ///
-/// - **WARNING:** Return value must be freed by the caller.
-pub fn bsonToJsonString(heap: Allocator, doc: BsonPtr) !Str {
+/// - **WARNING:** Return value must be freed by calling `Mongo.bsonFreeJson()`.
+pub fn bsonToJsonString(doc: BsonPtr) Error!Str {
     const data = lib_mongo.bsonToJSON(doc);
-    defer lib_mongo.bsonFree(@ptrCast(data));
 
     if (data == null) return Error.OperationFailed;
 
-    const json_str: []const u8 = mem.span(data);
-    const out = try heap.alloc(u8, json_str.len);
-    mem.copyForwards(u8, out, json_str);
-    return out;
+    return mem.span(data);
+}
+
+/// # Frees a JSON String Returned by `bsonToJsonString()`
+pub fn bsonFreeJson(data: Str) void {
+    lib_mongo.bsonFree(@constCast(data.ptr));
 }
 
 /// # Destroys a BSON Document
 pub fn bsonFree(doc: BsonPtr) void { lib_mongo.bsonDestroy(doc); }
+
+/// # Logs a BSON Error When Debug Mode is Enabled
+/// **Remarks:** Intended for internal use only.
+fn logBsonErr(
+    comptime level: log.Level,
+    debug_mode: bool,
+    err: *const lib_mongo.BsonError
+) void {
+    if (!debug_mode) return;
+
+    const fmt_str = "Code - {d} | {s}";
+    switch (level) {
+        .err => log.err(fmt_str, .{err.code, @as(StrC, &err.message)}),
+        .warn => log.warn(fmt_str, .{err.code, @as(StrC, &err.message)}),
+        else => {}
+    }
+}
 
 /// # Creates a New Index Model
 pub fn indexModelCreate(
@@ -396,33 +384,21 @@ pub fn indexModelCreate(
     const key = lib_mongo.bsonNew();
     defer lib_mongo.bsonDestroy(key);
 
-    const ord = @intFromEnum(order);
-    const key_fmt = "{{\"{s}\": {d}}}";
-    const key_strZ = try fmt.allocPrintSentinel(
-        heap, key_fmt, .{doc_key, ord}, 0
-    );
-    defer heap.free(key_strZ);
-
-    var err_res: lib_mongo.BsonError = undefined;
-
-    if (!lib_mongo.bsonFromJSON(key, key_strZ, &err_res)) {
-        const fmt_str = "Code - {d} | {s}";
-        log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+    if (!lib_mongo.bsonAddInt32(key, doc_key, @intFromEnum(order))) {
         return Error.OperationFailed;
     }
 
     const opts = lib_mongo.bsonNew();
     defer lib_mongo.bsonDestroy(opts);
 
-    const opts_fmt = "{{\"name\": \"{s}_index\", \"unique\": {}}}";
-    const opts_strZ = try fmt.allocPrintSentinel(
-        heap, opts_fmt, .{doc_key, unique}, 0
-    );
-    defer heap.free(opts_strZ);
+    const name = try fmt.allocPrint(heap, "{s}_index", .{doc_key});
+    defer heap.free(name);
 
-    if (!lib_mongo.bsonFromJSON(opts, opts_strZ, &err_res)) {
-        const fmt_str = "Code - {d} | {s}";
-        log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+    if (!lib_mongo.bsonAddString(opts, "name", name)) {
+        return Error.OperationFailed;
+    }
+
+    if (!lib_mongo.bsonAddBool(opts, "unique", unique)) {
         return Error.OperationFailed;
     }
 
@@ -460,10 +436,7 @@ pub const Database = struct {
     pub fn drop(self: DatabaseZ) Error!void {
         var err_res: lib_mongo.BsonError = undefined;
         if (!lib_mongo.dropDatabase(self.instance, &err_res)) {
-            if (self.debug_mode) {
-                const fmt_str = "Code - {d} | {s}";
-                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
-            }
+            logBsonErr(.err, self.debug_mode, &err_res);
 
             return Error.OperationFailed;
         }
@@ -477,10 +450,7 @@ pub const Database = struct {
         const exists = lib_mongo.hasCollection(self.instance, name, &err_res);
 
         if (!exists and err_res.code != 0) {
-            if (self.debug_mode) {
-                const fmt_str = "Code - {d} | {s}";
-                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
-            }
+            logBsonErr(.err, self.debug_mode, &err_res);
 
             return Error.OperationFailed;
         }
@@ -505,10 +475,7 @@ pub const Database = struct {
         const result = lib_mongo.sessionStart(self.client, &err_res);
 
         if (result == null) {
-            if (self.debug_mode) {
-                const fmt_str = "Code - {d} | {s}";
-                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
-            }
+            logBsonErr(.err, self.debug_mode, &err_res);
 
             return Error.OperationFailed;
         }
@@ -537,10 +504,7 @@ const Collection = struct {
     pub fn drop(self: CollectionZ) Error!void {
         var err_res: lib_mongo.BsonError = undefined;
         if (!lib_mongo.dropCollection(self.instance, &err_res)) {
-            if (self.debug_mode) {
-                const fmt_str = "Code - {d} | {s}";
-                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
-            }
+            logBsonErr(.err, self.debug_mode, &err_res);
 
             return Error.OperationFailed;
         }
@@ -554,10 +518,7 @@ const Collection = struct {
         );
 
         if (!succeed) {
-            if (self.debug_mode) {
-                const fmt_str = "Code - {d} | {s}";
-                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
-            }
+            logBsonErr(.err, self.debug_mode, &err_res);
 
             return Error.OperationFailed;
         }
@@ -583,10 +544,7 @@ const Collection = struct {
 
         if (rv >= 0) return rv
         else {
-            if (self.debug_mode) {
-                const fmt_str = "Code - {d} | {s}";
-                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
-            }
+            logBsonErr(.err, self.debug_mode, &err_res);
 
             return Error.InvalidQuery;
         }
@@ -622,30 +580,19 @@ const Collection = struct {
         const json_str = try StaticJSON.stringify(heap, data);
         defer heap.free(json_str);
 
-        const json_strZ = try fmt.allocPrintSentinel(
-            heap, "{s}", .{json_str}, 0
-        );
-        defer heap.free(json_strZ);
-
         const doc = lib_mongo.bsonNew();
         defer lib_mongo.bsonDestroy(doc);
 
         var err_res: lib_mongo.BsonError = undefined;
 
-        if (!lib_mongo.bsonFromJSON(doc, json_strZ, &err_res)) {
-            if (self.debug_mode) {
-                const fmt_str = "Code - {d} | {s}";
-                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
-            }
+        if (!lib_mongo.bsonFromJSON(doc, json_str, &err_res)) {
+            logBsonErr(.err, self.debug_mode, &err_res);
 
             return Error.OperationFailed;
         }
 
         if (!lib_mongo.insertOne(self.instance, doc, opts, &err_res)) {
-            if (self.debug_mode) {
-                const fmt_str = "Code - {d} | {s}";
-                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
-            }
+            logBsonErr(.err, self.debug_mode, &err_res);
 
             return if (err_res.code == 11000) Error.UniqueConstraintViolation
             else Error.OperationFailed;
@@ -677,17 +624,8 @@ const Collection = struct {
             const json_str = try StaticJSON.stringify(heap, item);
             defer heap.free(json_str);
 
-            const json_strZ = try fmt.allocPrintSentinel(
-                heap, "{s}", .{json_str}, 0
-            );
-            defer heap.free(json_strZ);
-
-            if (!lib_mongo.bsonFromJSON(docs[i], json_strZ, &err_res)) {
-                if (self.debug_mode) {
-                    const fmt_str = "Code - {d} | {s}";
-                    const msg = @as(StrC, &err_res.message);
-                    log.err(fmt_str, .{err_res.code, msg});
-                }
+            if (!lib_mongo.bsonFromJSON(docs[i], json_str, &err_res)) {
+                logBsonErr(.err, self.debug_mode, &err_res);
 
                 return Error.OperationFailed;
             }
@@ -698,10 +636,7 @@ const Collection = struct {
         );
 
         if (!succeed) {
-            if (self.debug_mode) {
-                const fmt_str = "Code - {d} | {s}";
-                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
-            }
+            logBsonErr(.err, self.debug_mode, &err_res);
 
             return if (err_res.code == 11000) Error.UniqueConstraintViolation
             else Error.OperationFailed;
@@ -727,10 +662,7 @@ const Collection = struct {
         );
 
         if (!succeed) {
-            if (self.debug_mode) {
-                const fmt_str = "Code - {d} | {s}";
-                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
-            }
+            logBsonErr(.err, self.debug_mode, &err_res);
 
             return Error.OperationFailed;
         }
@@ -755,10 +687,7 @@ const Collection = struct {
         );
 
         if (!succeed) {
-            if (self.debug_mode) {
-                const fmt_str = "Code - {d} | {s}";
-                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
-            }
+            logBsonErr(.err, self.debug_mode, &err_res);
 
             return Error.OperationFailed;
         }
@@ -788,10 +717,7 @@ const Collection = struct {
         );
 
         if (!succeed) {
-            if (self.debug_mode) {
-                const fmt_str = "Code - {d} | {s}";
-                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
-            }
+            logBsonErr(.err, self.debug_mode, &err_res);
 
             return Error.OperationFailed;
         }
@@ -820,10 +746,7 @@ const Collection = struct {
         );
 
         if (!succeed) {
-            if (self.debug_mode) {
-                const fmt_str = "Code - {d} | {s}";
-                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
-            }
+            logBsonErr(.err, self.debug_mode, &err_res);
 
             return Error.OperationFailed;
         }
@@ -836,10 +759,7 @@ const Collection = struct {
     pub fn indexCreate(self: CollectionZ, models: *const IndexModel) !void {
         var err_res: lib_mongo.BsonError = undefined;
         if (!lib_mongo.createIndex(self.instance, models, &err_res)) {
-            if (self.debug_mode) {
-                const fmt_str = "Code - {d} | {s}";
-                log.warn(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
-            }
+            logBsonErr(.warn, self.debug_mode, &err_res);
 
             return Error.OperationFailed;
         }
@@ -849,10 +769,7 @@ const Collection = struct {
     pub fn deleteIndex(self: CollectionZ, name: StrZ) !void {
         var err_res: lib_mongo.BsonError = undefined;
         if (!lib_mongo.deleteIndex(self.instance, name, &err_res)) {
-            if (self.debug_mode) {
-                const fmt_str = "Code - {d} | {s}";
-                log.warn(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
-            }
+            logBsonErr(.warn, self.debug_mode, &err_res);
 
             return Error.OperationFailed;
         }
@@ -916,19 +833,358 @@ const Iterator = struct {
             return null;
         }
 
-        const data = lib_mongo.bsonToJSON(doc);
-        defer lib_mongo.bsonFree(@ptrCast(data));
-
-        if (data == null) return Error.OperationFailed;
-
-        var json = try DynamicJSON.init(heap, mem.span(data), .{});
-        defer json.deinit();
-
-        return try DynamicJSON.parseInto(T, heap, json.data(), .{
-            .ignore_unknown_fields = true
-        });
+        return try bsonDecodeDoc(T, heap, doc);
     }
 };
+
+//##############################################################################
+//# BSON DECODER --------------------------------------------------------------#
+//##############################################################################
+
+// Mirrors `jsonic`'s copy semantics.
+// So every decoded value can be freed with `jsonic.free()`.
+
+fn bsonIsScalar(comptime T: type) bool {
+    return switch (@typeInfo(T)) {
+        .bool, .int, .float, .@"enum" => true, else => false
+    };
+}
+
+fn bsonCheckScalar(comptime T: type) void {
+    switch (@typeInfo(T)) {
+        .int => |n| {
+            if (n.bits > 53) {
+                const err_str = "@mongo: `{s}` in BSON decode exceeds the IEEE 754 double-precision boundary!";
+                @compileError(fmt.comptimePrint(err_str, .{@typeName(T)}));
+            }
+        },
+        .float => |f| {
+            if (f.bits != 64) @compileError("@mongo: Use only `f64` instead!");
+        },
+        else => {}
+    }
+}
+
+/// - Frees the decoded value.
+/// - Mirrors `jsonic.free()`, so the memory layout matches.
+fn bsonFreeValue(heap: Allocator, comptime T: type, value: T) void {
+    switch (@typeInfo(T)) {
+        .optional => |o| {
+            if (value) |v| bsonFreeValue(heap, o.child, v);
+        },
+        .array => |a| {
+            if (comptime !bsonIsScalar(a.child)) {
+                for (value) |item| bsonFreeValue(heap, a.child, item);
+            }
+        },
+        .pointer => |p| {
+            switch (p.size) {
+                .slice => {
+                    if (comptime !bsonIsScalar(p.child)) {
+                        for (value) |item| bsonFreeValue(heap, p.child, item);
+                    }
+
+                    heap.free(value);
+                },
+                .one => {
+                    bsonFreeValue(heap, p.child, value.*);
+                    heap.destroy(value);
+                },
+                else => {}
+            }
+        },
+        .@"struct" => |s| {
+            inline for (s.field_names, s.field_types, s.field_attrs) |name, FT, attrs| {
+                if (comptime attrs.@"comptime") continue;
+
+                bsonFreeValue(heap, FT, @field(value, name));
+            }
+        },
+        .@"union" => {
+            switch (value) {
+                inline else => |payload| bsonFreeValue(heap, @TypeOf(payload), payload)
+            }
+        },
+        else => {} // NO-OP
+    }
+}
+
+/// # Decodes a BSON Document into the Given Structure
+/// **Remarks:** Intended for internal use only. Only structs (and pointers
+/// to structs) are supported at the top level.
+fn bsonDecodeDoc(
+    comptime T: type,
+    heap: Allocator,
+    doc: lib_mongo.BsonC
+) Error!T {
+    switch (@typeInfo(T)) {
+        .optional => |o| return try bsonDecodeDoc(o.child, heap, doc),
+        .pointer => |p| {
+            if (!p.attrs.@"const") {
+                @compileError("@mongo: Use `const` ptr for `{s}` instead");
+            }
+
+            if (p.sentinel() != null) {
+                @compileError("@mongo: Sentinel terminated `{s}` is unsupported");
+            }
+
+            switch (p.size) {
+                .one => {
+                    const child = try heap.create(p.child);
+                    errdefer heap.destroy(child);
+
+                    child.* = try bsonDecodeDoc(p.child, heap, doc);
+                    return child;
+                },
+                else => return Error.OperationFailed,
+            }
+        },
+        else => {},
+    }
+
+    if (@typeInfo(T) != .@"struct") return Error.OperationFailed;
+
+    var iter: lib_mongo.Iter = undefined;
+    if (!lib_mongo.iterInit(&iter, doc)) return Error.OperationFailed;
+
+    return try bsonDecodeStruct(T, heap, &iter);
+}
+
+/// # Decodes a BSON Sub Document Into a Structure
+/// **Remarks:** Intended for internal use only. Iterates the elements and
+/// matches them against the structure's fields.
+fn bsonDecodeStruct(
+    comptime T: type,
+    heap: Allocator,
+    iter: *lib_mongo.Iter
+) Error!T {
+    const s = @typeInfo(T).@"struct";
+
+    var dest: T = undefined;
+    var done: [s.field_names.len]bool = undefined;
+    inline for (&done) |*d| d.* = false;
+
+    errdefer {
+        inline for (
+            s.field_names, s.field_types, s.field_attrs, 0..
+        ) |name, FT, attrs, i| {
+            if (comptime !attrs.@"comptime") {
+                if (done[i]) bsonFreeValue(heap, FT, @field(dest, name));
+            }
+        }
+    }
+
+    while (lib_mongo.iterNext(iter)) {
+        const key = mem.span(lib_mongo.iterKey(iter));
+
+        inline for (s.field_names, s.field_types, 0..) |name, FT, i| {
+            if (!done[i] and mem.eql(u8, key, name)) {
+                @field(dest, name) = try bsonDecodeValue(FT, heap, iter);
+                done[i] = true;
+            }
+        }
+    }
+
+    inline for (s.field_names, s.field_types, s.field_attrs, 0..) |name, FT, attrs, i| {
+        if (comptime !attrs.@"comptime") {
+            if (!done[i]) {
+                if (FT == void) continue;
+                if (comptime @typeInfo(FT) == .optional) {
+                    @field(dest, name) = null;
+                } else if (attrs.defaultValue(FT)) |dflt| {
+                    @field(dest, name) = dflt;
+                } else return Error.OperationFailed;
+            }
+        }
+    }
+
+    return dest;
+}
+
+/// # Decodes a BSON Value Into the Given Type
+/// **Remarks:** Intended for internal use only. Matches `std.json`'s
+/// type coercions, so the decode semantics mirror `jsonic`.
+fn bsonDecodeValue(
+    comptime T: type,
+    heap: Allocator,
+    iter: *lib_mongo.Iter
+) Error!T {
+    switch (@typeInfo(T)) {
+        .void => return {},
+        .null => return null,
+        .bool => {
+            if (lib_mongo.iterTypeTag(iter) != .boolean) return Error.OperationFailed;
+            return lib_mongo.iterBool(iter);
+        },
+        .int => {
+            comptime bsonCheckScalar(T);
+
+            switch (lib_mongo.iterTypeTag(iter)) {
+                .int32, .int64 => {
+                    const num = lib_mongo.iterAsInt64(iter);
+                    if (num < math.minInt(T) or num > math.maxInt(T)) {
+                        return Error.OperationFailed;
+                    }
+
+                    return @intCast(num);
+                },
+                .double => {
+                    const num = lib_mongo.iterAsDouble(iter);
+                    if (!math.isFinite(num) or
+                        num < math.minInt(T) or num > math.maxInt(T)
+                    ) return Error.OperationFailed;
+
+                    return @intFromFloat(num);
+                },
+                else => return Error.OperationFailed,
+            }
+        },
+        .float => {
+            comptime bsonCheckScalar(T);
+
+            switch (lib_mongo.iterTypeTag(iter)) {
+                .double, .int32, .int64 => return lib_mongo.iterAsDouble(iter),
+                else => return Error.OperationFailed,
+            }
+        },
+        .@"enum" => {
+            if (lib_mongo.iterTypeTag(iter) != .utf8) return Error.OperationFailed;
+
+            const tag = lib_mongo.iterUtf8(iter);
+            return std.meta.stringToEnum(T, tag) orelse Error.OperationFailed;
+        },
+        .optional => |o| {
+            if (lib_mongo.iterTypeTag(iter) == .null) return null;
+            return try bsonDecodeValue(o.child, heap, iter);
+        },
+        .pointer => |p| {
+            if (!p.attrs.@"const") {
+                const err_str = "@mongo: Use `const` ptr for `{s}` instead";
+                @compileError(fmt.comptimePrint(err_str, .{@typeName(T)}));
+            }
+
+            if (p.sentinel() != null) {
+                const err_str = "@mongo: Sentinel terminated `{s}` is unsupported";
+                @compileError(fmt.comptimePrint(err_str, .{@typeName(T)}));
+            }
+
+            switch (p.size) {
+                .slice => {
+                    // Handles []const u8 from a BSON string
+                    if (comptime p.child == u8) {
+                        if (lib_mongo.iterTypeTag(iter) != .utf8) {
+                            return Error.OperationFailed;
+                        }
+
+                        return try heap.dupe(u8, lib_mongo.iterUtf8(iter));
+                    }
+
+                    if (comptime bsonIsScalar(p.child)) comptime bsonCheckScalar(p.child);
+
+                    if (lib_mongo.iterTypeTag(iter) != .array) {
+                        return Error.OperationFailed;
+                    }
+
+                    const count = lib_mongo.iterCount(iter);
+                    var sub: lib_mongo.Iter = undefined;
+                    if (!lib_mongo.iterRecurse(iter, &sub)) return Error.OperationFailed;
+
+                    const out = try heap.alloc(p.child, count);
+                    var n: usize = 0;
+                    errdefer {
+                        for (out[0..n]) |item| bsonFreeValue(heap, p.child, item);
+                        heap.free(out);
+                    }
+
+                    while (lib_mongo.iterNext(&sub)) {
+                        if (n == count) return Error.OperationFailed;
+
+                        out[n] = try bsonDecodeValue(p.child, heap, &sub);
+                        n += 1;
+                    }
+
+                    if (n != count) return Error.OperationFailed;
+
+                    return out;
+                },
+                .one => {
+                    const child = try heap.create(p.child);
+                    errdefer heap.destroy(child);
+
+                    child.* = try bsonDecodeValue(p.child, heap, iter);
+                    return child;
+                },
+                else => {
+                    const err_str = "@mongo: Unsupported pointer type `{s}`";
+                    @compileError(fmt.comptimePrint(err_str, .{@typeName(T)}));
+                },
+            }
+        },
+        .array => |a| {
+            if (comptime bsonIsScalar(a.child)) comptime bsonCheckScalar(a.child);
+
+            if (lib_mongo.iterTypeTag(iter) != .array) return Error.OperationFailed;
+
+            var count_iter = iter.*;
+            const count = lib_mongo.iterCount(&count_iter);
+            if (count != a.len) return Error.OperationFailed;
+
+            var sub: lib_mongo.Iter = undefined;
+            if (!lib_mongo.iterRecurse(iter, &sub)) return Error.OperationFailed;
+
+            var dest: T = undefined;
+            var n: usize = 0;
+            errdefer {
+                if (comptime !bsonIsScalar(a.child)) {
+                    for (dest[0..n]) |item| bsonFreeValue(heap, a.child, item);
+                }
+            }
+
+            while (lib_mongo.iterNext(&sub)) {
+                if (n == a.len) return Error.OperationFailed;
+
+                dest[n] = try bsonDecodeValue(a.child, heap, &sub);
+                n += 1;
+            }
+
+            if (n != a.len) return Error.OperationFailed;
+
+            return dest;
+        },
+        .@"struct" => {
+            if (lib_mongo.iterTypeTag(iter) != .document) return Error.OperationFailed;
+
+            var sub: lib_mongo.Iter = undefined;
+            if (!lib_mongo.iterRecurse(iter, &sub)) return Error.OperationFailed;
+
+            return try bsonDecodeStruct(T, heap, &sub);
+        },
+        .@"union" => {
+            if (lib_mongo.iterTypeTag(iter) != .document) return Error.OperationFailed;
+
+            var sub: lib_mongo.Iter = undefined;
+            if (!lib_mongo.iterRecurse(iter, &sub)) return Error.OperationFailed;
+            if (!lib_mongo.iterNext(&sub)) return Error.OperationFailed;
+
+            const key = mem.span(lib_mongo.iterKey(&sub));
+
+            inline for (@typeInfo(T).@"union".field_names, @typeInfo(T).@"union".field_types) |name, FT| {
+                if (mem.eql(u8, key, name)) {
+                    if (FT == void) return @unionInit(T, name, {});
+
+                    const payload = try bsonDecodeValue(FT, heap, &sub);
+                    return @unionInit(T, name, payload);
+                }
+            }
+
+            return Error.OperationFailed;
+        },
+        else => {
+            const err_str = "@mongo: Unsupported type `{s}` in BSON decode";
+            @compileError(fmt.comptimePrint(err_str, .{@typeName(T)}));
+        }
+    }
+}
 
 //##############################################################################
 //# SESSION INTERFACE ---------------------------------------------------------#
@@ -950,10 +1206,7 @@ pub const AcidSession = struct {
     pub fn start(self: AcidSessionZ) Error!void {
         var err_res: lib_mongo.BsonError = undefined;
         if (!lib_mongo.transactionStart(self.instance, &err_res)) {
-            if (self.debug_mode) {
-                const fmt_str = "Code - {d} | {s}";
-                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
-            }
+            logBsonErr(.err, self.debug_mode, &err_res);
 
             return Error.OperationFailed;
         }
@@ -964,10 +1217,7 @@ pub const AcidSession = struct {
     pub fn append(self: AcidSessionZ, opts: BsonPtr) Error!void {
         var err_res: lib_mongo.BsonError = undefined;
         if (!lib_mongo.transactionAppend(self.instance, opts, &err_res)) {
-            if (self.debug_mode) {
-                const fmt_str = "Code - {d} | {s}";
-                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
-            }
+            logBsonErr(.err, self.debug_mode, &err_res);
 
             return Error.OperationFailed;
         }
@@ -983,10 +1233,7 @@ pub const AcidSession = struct {
         };
 
         if (!result) {
-            if (self.debug_mode) {
-                const fmt_str = "Code - {d} | {s}";
-                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
-            }
+            logBsonErr(.err, self.debug_mode, &err_res);
 
             return Error.OperationFailed;
         }
