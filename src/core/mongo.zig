@@ -2,6 +2,7 @@
 //! **Remarks:** Only uses client pool for thread safety.
 
 const std = @import("std");
+const Io = std.Io;
 const fmt = std.fmt;
 const log = std.log;
 const mem = std.mem;
@@ -40,40 +41,56 @@ const Error = error {
     UniqueConstraintViolation
 };
 
+/// Tracks live `Mongo` clients, so the driver is initialized once
+/// and cleaned up only after the last instance is released.
+var client_refs = std.atomic.Value(u32).init(0);
+
+io: Io,
 db_name: StrZ,
 debug_mode: bool,
 uri: lib_mongo.Uri,
 pool: lib_mongo.Pool,
-resetting: bool = false,
+
+/// Serializes pool access against `resetPool()`
+pool_mutex: Io.Mutex = .init,
 
 const Self = @This();
 
 /// # Initializes MongoDB Client
+/// - `mode` - Enables debug mode when **true**.
 /// **Remarks:** Intended for internal use only.
-pub fn init(debug_mode: bool, uri_string: StrZ, db_name: StrZ) Error!Self {
+pub fn init(io: Io, mode: bool, uri_string: StrZ, db_name: StrZ) Error!Self {
     // Whether any error log will be shown in the terminal
-    if (debug_mode) lib_mongo.logSetHandler(lib_mongo.showErr, null)
+    if (mode) lib_mongo.logSetHandler(lib_mongo.showErr, null)
     else lib_mongo.logSetHandler(null, null);
 
-    lib_mongo.init();
+    // `mongoc_cleanup()` tears down global driver state, so it must only
+    // run once the last `Mongo` instance is gone
+    if (client_refs.fetchAdd(1, .seq_cst) == 0) lib_mongo.init();
+    errdefer _ = client_refs.fetchSub(1, .seq_cst);
 
     var err_res: lib_mongo.BsonError = undefined;
     const uri = lib_mongo.newUri(uri_string, &err_res);
 
     if (uri == null) {
-        if (debug_mode) {
+        if (mode) {
             const fmt_str = "Code - {d} | {s}";
             log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
         }
 
         return Error.InvalidUri;
     }
+    errdefer lib_mongo.destroyUri(uri);
+
+    const pool = lib_mongo.clientPoolNew(uri);
+    if (pool == null) return Error.InvalidUri;
 
     return .{
+        .io = io,
         .db_name = db_name,
-        .debug_mode = debug_mode,
+        .debug_mode = mode,
         .uri = uri,
-        .pool = lib_mongo.clientPoolNew(uri)
+        .pool = pool
     };
 }
 
@@ -82,13 +99,18 @@ pub fn init(debug_mode: bool, uri_string: StrZ, db_name: StrZ) Error!Self {
 pub fn deinit(self: *const Self) void {
     lib_mongo.clientPoolDestroy(self.pool);
     lib_mongo.destroyUri(self.uri);
-    lib_mongo.cleanUp();
+
+    if (client_refs.fetchSub(1, .seq_cst) == 1) lib_mongo.cleanUp();
 }
 
 /// # Resets MongoDB Connection Pool
-pub fn resetPool(self: *Self) void {
-    if (@atomicRmw(bool, &self.resetting, .Xchg, true, .seq_cst)) return;
-    defer @atomicStore(bool, &self.resetting, false, .seq_cst);
+/// **CAUTION:** All outstanding `Database` handles (borrowed clients) must
+/// be freed before calling this, otherwise it's an undefined behavior.
+///
+/// **Remarks:** Concurrent `database()` calls are blocked until reset is done.
+pub fn resetPool(self: *Self) !void {
+    try self.pool_mutex.lock(self.io);
+    defer self.pool_mutex.unlock(self.io);
 
     lib_mongo.clientPoolDestroy(self.pool);
     self.pool = lib_mongo.clientPoolNew(self.uri);
@@ -98,12 +120,15 @@ pub fn resetPool(self: *Self) void {
 /// **Remarks:** Returns default database from the `init()`.
 ///
 /// **WARNING:** Return value must be freed by calling `Database.free()`.
-pub fn database(self: *const Self) Database {
+pub fn database(self: *Self) !Database {
+    try self.pool_mutex.lock(self.io);
     const c = lib_mongo.clientPoolPop(self.pool);
+    self.pool_mutex.unlock(self.io);
+
     const d = lib_mongo.clientGetDatabase(c, self.db_name);
     return .{
         .debug_mode = self.debug_mode,
-        .pool = self.pool,
+        .parent = self,
         .client = c,
         .instance = d
     };
@@ -111,12 +136,15 @@ pub fn database(self: *const Self) Database {
 
 /// # Returns a New Database Handle
 /// **WARNING:** Return value must be freed by calling `Database.free()`.
-pub fn databaseWith(self: *const Self, db_name: StrZ) Database {
+pub fn databaseWith(self: *Self, db_name: StrZ) !Database {
+    try self.pool_mutex.lock(self.io);
     const c = lib_mongo.clientPoolPop(self.pool);
+    self.pool_mutex.unlock(self.io);
+
     const d = lib_mongo.clientGetDatabase(c, db_name);
     return .{
         .debug_mode = self.debug_mode,
-        .pool = self.pool,
+        .parent = self,
         .client = c,
         .instance = d
     };
@@ -138,16 +166,24 @@ pub fn bsonBuild(
     var buff: [8192]u8 = undefined;
     const src = try std.fmt.bufPrintSentinel(&buff, fmt_str, args, 0);
 
+    const bson = doc orelse lib_mongo.bsonNew();
+    // Only clean up when the document is owned by this function
+    errdefer if (doc == null) lib_mongo.bsonDestroy(bson);
+
     var err_res: lib_mongo.BsonError = undefined;
-    const bson = if (doc) |bson_doc| bson_doc else bsonNew();
-    if (!lib_mongo.bsonFromJSON(bson, src, &err_res) and self.debug_mode) {
-        const err_str = "Code - {d} | {s} \n {s}";
-        log.err(err_str, .{err_res.code, @as(StrC, &err_res.message), src});
+
+    if (!lib_mongo.bsonFromJSON(bson, src, &err_res)) {
+        if (self.debug_mode) {
+            const err_str = "Code - {d} | {s} \n {s}";
+            log.err(err_str, .{err_res.code, @as(StrC, &err_res.message), src});
+        }
+
         return Error.InvalidInputString;
     }
 
-    return if (lib_mongo.bsonValidate(bson)) |_| bson
-    else Error.InvalidInputString;
+    if (lib_mongo.bsonValidate(bson) == null) return Error.InvalidInputString;
+
+    return bson;
 }
 
 /// # Builds BSON Document from a Formatted JSON String
@@ -166,16 +202,24 @@ pub fn bsonBuildLarge(
     const src = try std.fmt.allocPrintSentinel(heap, fmt_str, args, 0);
     defer heap.free(src);
 
+    const bson = doc orelse lib_mongo.bsonNew();
+    // Only clean up when the document is owned by this function
+    errdefer if (doc == null) lib_mongo.bsonDestroy(bson);
+
     var err_res: lib_mongo.BsonError = undefined;
-    const bson = if (doc) |bson_doc| bson_doc else bsonNew();
-    if (!lib_mongo.bsonFromJSON(bson, src, &err_res) and self.debug_mode) {
-        const err_str = "Code - {d} | {s} \n {s}";
-        log.err(err_str, .{err_res.code, @as(StrC, &err_res.message), src});
+
+    if (!lib_mongo.bsonFromJSON(bson, src, &err_res)) {
+        if (self.debug_mode) {
+            const err_str = "Code - {d} | {s} \n {s}";
+            log.err(err_str, .{err_res.code, @as(StrC, &err_res.message), src});
+        }
+
         return Error.InvalidInputString;
     }
 
-    return if (lib_mongo.bsonValidate(bson)) |_| bson
-    else Error.InvalidInputString;
+    if (lib_mongo.bsonValidate(bson) == null) return Error.InvalidInputString;
+
+    return bson;
 }
 
 /// # Adds a New Sub Document to the Given Parent Document
@@ -252,6 +296,13 @@ pub fn bsonAddProp(
             switch (p.size) {
                 .slice => {
                     // Handles []const u8
+                    if (p.child != u8) {
+                        @compileError(fmt.comptimePrint(
+                            "@mongo: `{s}` in BSON append is not a u8 slice",
+                            .{@typeName(T)}
+                        ));
+                    }
+
                     const val = try heap.allocSentinel(u8, value.len, 0);
                     mem.copyForwards(u8, val, value);
                     defer heap.free(val);
@@ -261,11 +312,35 @@ pub fn bsonAddProp(
                 },
                 .many => {
                     // Handles [*:0]const u8 - already null-terminated
+                    if (p.child != u8 or p.sentinel_ptr == null) {
+                        @compileError(fmt.comptimePrint(
+                            "@mongo: `{s}` in BSON append is not a null terminated string",
+                            .{@typeName(T)}
+                        ));
+                    }
+
                     const succeed = lib_mongo.bsonAddString(doc, key, value);
                     if (!succeed) return Error.InsertionFailed;
                 },
                 .one => {
-                    // Handle *const [N:0]u8 (pointer to array)
+                    // Handles *const [N:0]u8 (pointer to array)
+                    switch (@typeInfo(p.child)) {
+                        .array => |a| {
+                            if (a.child != u8 or a.sentinel_ptr == null) {
+                                @compileError(fmt.comptimePrint(
+                                    "@mongo: `{s}` in BSON append is not a null terminated string",
+                                    .{@typeName(T)}
+                                ));
+                            }
+                        },
+                        else => {
+                            @compileError(fmt.comptimePrint(
+                                "@mongo: `{s}` in BSON append is not a null terminated string",
+                                .{@typeName(T)}
+                            ));
+                        },
+                    }
+
                     const succeed = lib_mongo.bsonAddString(doc, key, value);
                     if (!succeed) return Error.InsertionFailed;
                 },
@@ -299,6 +374,8 @@ pub fn bsonSetProp(heap: Allocator,
 pub fn bsonToJsonString(heap: Allocator, doc: BsonPtr) !Str {
     const data = lib_mongo.bsonToJSON(doc);
     defer lib_mongo.bsonFree(@ptrCast(data));
+
+    if (data == null) return Error.OperationFailed;
 
     const json_str: []const u8 = mem.span(data);
     const out = try heap.alloc(u8, json_str.len);
@@ -362,8 +439,8 @@ pub fn indexModelDestroy(model: IndexModel) void {
 //##############################################################################
 
 pub const Database = struct {
+    parent: *Self,
     debug_mode: bool,
-    pool: lib_mongo.Pool,
     client: lib_mongo.Client,
     instance: lib_mongo.Database,
 
@@ -372,7 +449,10 @@ pub const Database = struct {
     /// # Releases the Database Handle
     pub fn free(self: DatabaseZ) void {
         lib_mongo.destroyDatabase(self.instance);
-        lib_mongo.clientPoolPush(self.pool, self.client);
+
+        self.parent.pool_mutex.lockUncancelable(self.parent.io);
+        defer self.parent.pool_mutex.unlock(self.parent.io);
+        lib_mongo.clientPoolPush(self.parent.pool, self.client);
     }
 
     /// # Deletes the Entire Database
@@ -385,14 +465,27 @@ pub const Database = struct {
                 log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
             }
 
-            return Error.DoesNotExists;
+            return Error.OperationFailed;
         }
     }
 
     /// # Checks Whether a Collection Exists
-    pub fn hasCollection(self: DatabaseZ, name: StrZ) bool {
-        var err_res: lib_mongo.BsonError = undefined;
-        return lib_mongo.hasCollection(self.instance, name, &err_res);
+    /// **Remarks:** Fails with `Error.OperationFailed` when the existence
+    /// check itself fails (e.g. network error), rather than returning false.
+    pub fn hasCollection(self: DatabaseZ, name: StrZ) Error!bool {
+        var err_res = std.mem.zeroes(lib_mongo.BsonError);
+        const exists = lib_mongo.hasCollection(self.instance, name, &err_res);
+
+        if (!exists and err_res.code != 0) {
+            if (self.debug_mode) {
+                const fmt_str = "Code - {d} | {s}";
+                log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
+            }
+
+            return Error.OperationFailed;
+        }
+
+        return exists;
     }
 
     /// # Returns a New Collection Handle
@@ -403,6 +496,9 @@ pub const Database = struct {
     }
 
     /// # Returns a New Session Handle
+    /// **Remarks:** The session is bound to this Database's client and must
+    /// be released before the Database is freed.
+    ///
     /// **WARNING:** Return value must be freed by calling `AcidSession.free()`.
     pub fn session(self: DatabaseZ) Error!AcidSession {
         var err_res: lib_mongo.BsonError = undefined;
@@ -446,7 +542,7 @@ const Collection = struct {
                 log.err(fmt_str, .{err_res.code, @as(StrC, &err_res.message)});
             }
 
-            return Error.DoesNotExists;
+            return Error.OperationFailed;
         }
     }
 
@@ -476,10 +572,13 @@ const Collection = struct {
         const flt = if (filter) |f| f else lib_mongo.bsonNew();
         defer if (filter == null) lib_mongo.bsonDestroy(flt);
 
-        var reply: lib_mongo.Bson = undefined;
+        // The reply is initialized by `count_documents` and must be destroyed
+        const reply = lib_mongo.bsonNew();
+        defer lib_mongo.bsonDestroy(reply);
+
         var err_res: lib_mongo.BsonError = undefined;
         const rv = lib_mongo.countDocuments(
-            self.instance, flt, options, &reply, &err_res
+            self.instance, flt, options, @ptrCast(reply), &err_res
         );
 
         if (rv >= 0) return rv
@@ -494,16 +593,21 @@ const Collection = struct {
     }
 
     /// # Executes a Query
+    /// **Remarks:** Fails when the cursor can not be created.
+    ///
     /// **WARNING:** Return value must be freed by calling `Iterator.free()`.
     pub fn find(
         self: CollectionZ,
         filter: ?BsonPtr,
         options: ?BsonPtr
-    ) Iterator {
+    ) Error!Iterator {
         const flt = if (filter) |f| f else lib_mongo.bsonNew();
         defer if (filter == null) lib_mongo.bsonDestroy(flt);
 
         const cursor = lib_mongo.find(self.instance, flt, options);
+
+        if (cursor == null) return Error.InvalidCursor;
+
         return .{.debug_mode = self.debug_mode, .instance = cursor};
     }
 
@@ -664,8 +768,9 @@ const Collection = struct {
     }
 
     /// # Updates a Single Document
-    /// **Remarks:** Updates only the first document that matches the filter.
-    /// Return value is **0**, when updated data is the same.
+    /// **Remarks:** Updates only the first document that matches the filter. 
+    /// Returns the number of **matched** documents, which also counts 
+    /// documents where the update did not change any data.
     ///
     /// - `opts` - is required for ACID transaction
     pub fn updateOne(
@@ -696,7 +801,8 @@ const Collection = struct {
     }
 
     /// # Updates Multiple Documents
-    /// **Remarks: Updates all documents that match the filter.
+    /// **Remarks:** Updates all documents that match the filter. Returns the
+    /// number of **matched** documents.
     ///
     /// - `opts` - is required for ACID transaction
     pub fn updateMany(
@@ -754,15 +860,21 @@ const Collection = struct {
 
     /// # Returns Index List Cursor from the Collection
     /// **WARNING:** Return value must be freed by calling `Iterator.free()`.
-    pub fn findIndexes(self: CollectionZ) Iterator {
+    pub fn findIndexes(self: CollectionZ) Error!Iterator {
         const cursor = lib_mongo.findIndexes(self.instance);
+
+        if (cursor == null) return Error.OperationFailed;
+
         return .{.debug_mode = self.debug_mode, .instance = cursor};
     }
 
     /// # Executes an Aggregation Pipeline
     /// **WARNING:** Return value must be freed by calling `Iterator.free()`.
-    pub fn aggregate(self: CollectionZ, pipeline: BsonPtr) Iterator {
+    pub fn aggregate(self: CollectionZ, pipeline: BsonPtr) Error!Iterator {
         const cursor = lib_mongo.aggregate(self.instance, pipeline);
+
+        if (cursor == null) return Error.OperationFailed;
+
         return .{.debug_mode = self.debug_mode, .instance = cursor};
     }
 };
@@ -779,14 +891,15 @@ const Iterator = struct {
 
     /// # Releases the Cursor Handle
     pub fn free(self: IteratorZ) void {
-        lib_mongo.destroyCursor(self.instance);
+        if (self.instance) |cursor| lib_mongo.destroyCursor(cursor);
     }
 
     /// # Iterates the Cursor to the Next Document
     /// **WARNING:** Return value must be freed by calling `jsonic.free()`.
     pub fn next(self: Iterator, heap: Allocator, comptime T: type) !?T {
-        var doc = lib_mongo.bsonNew();
-        defer lib_mongo.bsonDestroy(doc);
+        // The document is cursor-owned (ephemeral until the next call),
+        // so it must neither be allocated nor destroyed here.
+        var doc: lib_mongo.BsonC = null;
 
         if (!lib_mongo.nextCursor(self.instance, @ptrCast(&doc))) {
             var err_res: lib_mongo.BsonError = undefined;
@@ -805,6 +918,8 @@ const Iterator = struct {
 
         const data = lib_mongo.bsonToJSON(doc);
         defer lib_mongo.bsonFree(@ptrCast(data));
+
+        if (data == null) return Error.OperationFailed;
 
         var json = try DynamicJSON.init(heap, mem.span(data), .{});
         defer json.deinit();

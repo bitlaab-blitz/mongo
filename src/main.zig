@@ -5,23 +5,21 @@ const jsonic = @import("jsonic");
 const Mongo = @import("mongo").Mongo;
 
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     std.debug.print("Code coverage examples\n", .{});
 
-    var gpa_mem = std.heap.DebugAllocator(.{}).init;
-    defer std.debug.assert(gpa_mem.deinit() == .ok);
-    const heap = gpa_mem.allocator();
+    const heap = init.gpa;
 
     // Let's start from here...
 
     const uri = "mongodb://localhost:27017?maxPoolSize=50&replicaSet=rs0&serverSelectionTimeoutMS=5000&connectTimeoutMS=10000&retryWrites=true&retryReads=true";
-    const mongo_db = try Mongo.init(true, uri, "your_example_db");
+    var mongo_db = try Mongo.init(init.io, true, uri, "your_example_db");
     defer mongo_db.deinit();
 
-    const db = mongo_db.database();
+    const db = try mongo_db.database();
     defer db.free();
 
-    const exist = db.hasCollection("bar");
+    const exist = try db.hasCollection("bar");
     std.debug.print("Collection exists: {}\n", .{exist});
 
     const coll = db.collection("foo");
@@ -56,7 +54,7 @@ pub fn main() !void {
     {
         const User = struct { name: []const u8, age: u8 };
 
-        const cursor = coll.find(null, null);
+        const cursor = try coll.find(null, null);
         defer cursor.free();
 
         while (try cursor.next(heap, User)) |doc| {
@@ -100,7 +98,7 @@ pub fn main() !void {
 
     // Find indexes
     {
-        const cursor = coll.findIndexes();
+        const cursor = try coll.findIndexes();
         defer cursor.free();
 
         while (try cursor.next(heap, Mongo.IndexData)) |doc| {
