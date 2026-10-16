@@ -539,7 +539,7 @@ pub const Tag = enum {
     boolean,
     int32,
     int64,
-    nul,
+    null,
     other
 };
 
@@ -558,6 +558,17 @@ pub fn iterRecurse(iter: *const Iter, child: *Iter) bool {
     return bson.bson_iter_recurse(@ptrCast(iter), @ptrCast(child));
 }
 
+/// # Counts the Elements in the Document/Array at the Current Element
+/// **Remarks:** Returns `0` if the current element is not a document or array.
+pub fn iterCount(iter: *const Iter) usize {
+    var sub: bson.bson_iter_t = undefined;
+    if (!bson.bson_iter_recurse(@ptrCast(iter), &sub)) return 0;
+
+    var count: usize = 0;
+    while (bson.bson_iter_next(&sub)) count += 1;
+    return count;
+}
+
 /// # Returns the Type Tag of the Current Element
 pub fn iterTypeTag(iter: *const Iter) Tag {
     return switch (bson.bson_iter_type(@ptrCast(iter))) {
@@ -568,7 +579,7 @@ pub fn iterTypeTag(iter: *const Iter) Tag {
         bson.BSON_TYPE_BOOL => .boolean,
         bson.BSON_TYPE_INT32 => .int32,
         bson.BSON_TYPE_INT64 => .int64,
-        bson.BSON_TYPE_NULL => .nul,
+        bson.BSON_TYPE_NULL => .null,
         else => .other
     };
 }
