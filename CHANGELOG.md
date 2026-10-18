@@ -23,7 +23,7 @@ Here we write upgrading notes and make them as straightforward as possible.
 - A short description for fixed item n
 
 
-## [v1.7.0] - 2026-10-11
+## [v1.7.0] - 2026-10-18
 
 Major performance and correctness overhaul: direct BSON encoding/decoding, copy-free property appends and several memory/race bug fixes, better documentation, and Zig-0.17.0 version support.
 
@@ -32,6 +32,8 @@ Major performance and correctness overhaul: direct BSON encoding/decoding, copy-
 - `toBsonDoc()` - Converts a Zig structure (including nested structs, arrays, tagged unions and optionals) directly into a BSON document.
 - `bsonFreeJson()` - Frees strings returned by `bsonToJsonString()`.
 - Direct BSON-to-structure cursor decoding - `Iterator.next()` no longer converts documents through JSON; supports nested structs, arrays, tagged unions and `jsonic`-style field defaults.
+- `indexModelCreateCompound()` - Creates a compound index model over multiple fields with individual sort orders.
+- `Collection.renameWith()` - Renames a collection with an optional `drop_target` flag to overwrite the destination.
 
 ### Changed
 
@@ -40,6 +42,9 @@ Major performance and correctness overhaul: direct BSON encoding/decoding, copy-
 - `bsonBuild()` formatted input limit is now 4096 bytes (was 8192); use `bsonBuildLarge()` for larger input.
 - Driver initialization/cleanup is reference-counted, allowing multiple `Mongo` instances to coexist.
 - `indexModelCreate()` builds key/option documents directly instead of parsing JSON.
+- `indexModelCreate()` and `indexModelCreateCompound()` return `Error.OutOfMemory` instead of a NULL model handle when the driver fails to allocate the model.
+- `deleteIndex()` treats an already-missing index or collection as a successful no-op (server codes 26/27).
+- The BSON decoder no longer rejects integer types wider than the IEEE 754 2^53 boundary at compile time; instead, fractional doubles error out and double-typed values beyond the 2^53 exact-integer range error out for such types (int32/int64-typed values remain exact).
 
 ### Fixed
 
@@ -51,6 +56,9 @@ Major performance and correctness overhaul: direct BSON encoding/decoding, copy-
 - `find()`, `findIndexes()` and `aggregate()` now return an error instead of a null cursor.
 - `hasCollection()` now distinguishes a failed existence check from a missing collection.
 - `drop()` now reports `OperationFailed` instead of the misleading `DoesNotExists`.
+- `resetPool()` now returns `Error.OperationFailed` and keeps the previous pool intact instead of storing a NULL pool when replacement fails.
+- Driver `init()`/`cleanUp()` and the global log handler are now mutex-protected, closing init/cleanup and log-handler races between concurrent `Mongo` instances; the handler is only installed/uninstalled by the first/last debug-mode instance.
+- `insertMany()` guards against a NULL BSON document on allocation failure and treats empty input as a successful no-op.
 
 ## [v1.6.1] - 2026-03-29
 

@@ -126,17 +126,6 @@ pub fn dropDatabase(db: Database, err: *BsonError) bool {
     return mongoc.mongoc_database_drop(db, @as([*c]BsonError, err));
 }
 
-/// # Returns a Collection Handle
-pub fn clientGetCollection(
-    client: Client,
-    db_name: StrZ,
-    coll_name: StrZ
-) Collection {
-    return mongoc.mongoc_client_get_collection(
-        client, @as(StrC, db_name), @as(StrC, coll_name)
-    );
-}
-
 /// # Returns a Collection Handle from a Database Handle
 pub fn getCollection(db: Database, coll_name: StrZ) Collection {
     return mongoc.mongoc_database_get_collection(db, @as(StrC, coll_name));
@@ -155,14 +144,16 @@ pub fn hasCollection(db: Database, coll_name: StrZ, err: *BsonError) bool {
 }
 
 /// # Renames the Collection
+/// - `drop_target` - Drops the destination collection when **true**.
 pub fn renameCollection(
     coll: Collection,
     dest_db_name: StrZ,
     new_name: StrZ,
+    drop_target: bool,
     err: *BsonError
 ) bool {
     return mongoc.mongoc_collection_rename(
-        coll, @as(StrC, dest_db_name), @as(StrC, new_name), false, err
+        coll, @as(StrC, dest_db_name), @as(StrC, new_name), drop_target, err
     );
 }
 
@@ -211,14 +202,6 @@ pub fn destroyCursor(cur: Cursor) void { mongoc.mongoc_cursor_destroy(cur); }
 /// # Iterates the Cursor to the Next Document (Blocking)
 pub fn nextCursor(cur: Cursor, doc: [*c][*c]const Bson) bool {
     return mongoc.mongoc_cursor_next(cur, doc);
-}
-
-/// # Sets Batch Size Limit on a Cursor
-/// **Remarks:** Limits the number of documents returned in one batch.
-/// Each batch requires a round trip to the server. If the batch size is zero,
-/// the cursor uses the server-defined maximum batch size.
-pub fn setCursorBatchSize(cur: Cursor, batch_sz: u32) void {
-    mongoc.mongoc_cursor_set_batch_size(cur, batch_sz);
 }
 
 /// # Checks Whether an Error Occurred While Iterating
@@ -309,6 +292,8 @@ pub fn updateMany(
 }
 
 /// # Creates a New Index Model
+/// **Remarks:** The driver copies both `keys` and `opts`, so the originals
+/// can be destroyed immediately after the model is created.
 pub fn indexModelNew(keys: BsonC, opts: BsonC) IndexModel {
     return mongoc.mongoc_index_model_new(keys, opts);
 }
@@ -435,16 +420,6 @@ pub fn bsonAddDoc(doc: [*c]Bson, name: Str, value: [*c]Bson) bool {
         @as(StrC, name.ptr),
         @intCast(name.len),
         @ptrCast(value),
-    );
-}
-
-/// # Adds a New Array Property to the Given Document
-pub fn bsonAddArray(doc: [*c]Bson, name: Str, value: [*c]Bson) bool {
-    return bson.bson_append_array(
-        @ptrCast(doc),
-        @as(StrC, name.ptr),
-        @intCast(name.len),
-        @ptrCast(value)
     );
 }
 

@@ -45,7 +45,9 @@ try mongo_db.resetPool();
 ```
 
 **Remarks:** Concurrent `database()` calls are blocked until the reset is done.
-Useful when a connection pool becomes unusable after a driver failure.
+Useful when a connection pool becomes unusable after a driver failure. If the
+new pool can not be created, the call fails with an error and the previous
+pool is left intact.
 
 ## Working with a Collection
 
@@ -74,6 +76,12 @@ And rename it with:
 
 ```zig
 try coll.rename("your_custom_db", "new_name");
+```
+
+Or rename it and drop an already existing destination collection with:
+
+```zig
+try coll.renameWith("your_custom_db", "new_name", true);
 ```
 
 **CAUTION:** `db.drop()` deletes the entire database and can not be undone.
@@ -173,6 +181,11 @@ while (try cursor.next(heap, User)) |doc| {
 }
 ```
 
+**Remarks:** Scalar decoding is strict: fractional doubles fail instead of
+being truncated into integer fields, and integer values beyond the IEEE 754
+2^53 exact-integer range fail when the field stores a BSON double (BSON int32
+and int64 values are always exact).
+
 ### Insert Document
 
 Following example snippet will insert one or more documents on a collection.
@@ -187,6 +200,7 @@ try coll.insertOne(heap, user, null);
 
 // Inserts multiple documents
 
+```zig
 const users = [_]User {
     .{.name = "john doe", .age = 31},
     .{.name = "jane doe", .age = 28}
@@ -194,6 +208,8 @@ const users = [_]User {
 
 try coll.insertMany(heap, users[0..], null);
 ```
+
+**Remarks:** An empty input is treated as a successful no-op.
 
 ### Update Document
 
@@ -291,7 +307,20 @@ defer Mongo.indexModelDestroy(model_2);
 try coll.indexCreate(&model_2);
 ```
 
-**Remarks:** Order (e.g., `.Asc`, `.Desc`) will tell MongoDB in which order the index should occur. The boolean unique value will enforce uniqueness on a given key.
+**Remarks:** Order (e.g., `.Asc`, `.Desc`) will tell MongoDB in which order the index should occur. The boolean unique value will enforce uniqueness on a given key. The single-field index name `name_index` is derived from the key only, so `.Asc` and `.Desc` models for the same key share a name and can not be created together.
+
+Following example snippet will create a compound index on multiple fields.
+
+```zig
+const model = try Mongo.indexModelCreateCompound(heap, &.{
+    .{.name = "name", .order = .Asc},
+    .{.name = "age", .order = .Desc},
+}, true);
+defer Mongo.indexModelDestroy(model);
+try coll.indexCreate(&model);
+```
+
+**Remarks:** Compound fields are indexed in the given order, MongoDB can serve queries on any left-prefix of the key. The created index is named after its key order, such as `name_1_age_-1_index`.
 
 ### Delete an Index
 
@@ -300,6 +329,8 @@ Following example snippet will delete an index from a collection.
 ```zig
 try coll.deleteIndex("name_index");
 ```
+
+**Remarks:** Deleting an already-missing index counts as a successful no-op.
 
 ### Find Indexes
 

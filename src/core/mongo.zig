@@ -25,6 +25,8 @@ pub const BsonPtr = [*c] lib_mongo.Bson;
 pub const IndexModel = lib_mongo.IndexModel;
 pub const IndexData = struct { v: u8, name: []const u8 };
 
+pub const IndexField = struct { name: Str, order: IndexOrder };
+
 const IndexOrder = enum(i8) { Asc = 1, Desc = -1 };
 
 const Error = error {
@@ -44,6 +46,12 @@ const Error = error {
 /// and cleaned up only after the last instance is released.
 var client_refs = std.atomic.Value(u32).init(0);
 
+/// Tracks debug-mode `Mongo` instances, since the log handler is process-wide
+var debug_refs = std.atomic.Value(u32).init(0);
+
+/// Serializes driver init/cleanup against concurrent instances
+var driver_mutex: Io.Mutex = .init;
+
 io: Io,
 db_name: StrZ,
 debug_mode: bool,
@@ -60,13 +68,28 @@ const Self = @This();
 /// **Remarks:** Intended for internal use only.
 pub fn init(io: Io, mode: bool, uri_string: StrZ, db_name: StrZ) Error!Self {
     // Whether any error log will be shown in the terminal
-    if (mode) lib_mongo.logSetHandler(lib_mongo.showErr, null)
-    else lib_mongo.logSetHandler(null, null);
+    // `logSetHandler()` must happen before `mongoc_init()`, so it is done
+    // inside the driver mutex on purpose
+    driver_mutex.lockUncancelable(io);
+
+    if (mode) {
+        if (debug_refs.fetchAdd(1, .seq_cst) == 0)
+            lib_mongo.logSetHandler(lib_mongo.showErr, null);
+    } else if (debug_refs.load(.seq_cst) == 0) {
+        lib_mongo.logSetHandler(null, null);
+    }
 
     // `mongoc_cleanup()` tears down global driver state, so it must only
-    // run once the last `Mongo` instance is gone
-    if (client_refs.fetchAdd(1, .seq_cst) == 0) lib_mongo.init();
-    errdefer _ = client_refs.fetchSub(1, .seq_cst);
+    // run once the last `Mongo` instance is gone, mutually exclusive with
+    // concurrent initialization
+    const is_first = client_refs.fetchAdd(1, .seq_cst) == 0;
+    if (is_first) lib_mongo.init();
+    driver_mutex.unlock(io);
+
+    errdefer {
+        if (mode) _ = debug_refs.fetchSub(1, .seq_cst);
+        _ = client_refs.fetchSub(1, .seq_cst);
+    }
 
     var err_res: lib_mongo.BsonError = undefined;
     const uri = lib_mongo.newUri(uri_string, &err_res);
@@ -96,7 +119,16 @@ pub fn deinit(self: *const Self) void {
     lib_mongo.clientPoolDestroy(self.pool);
     lib_mongo.destroyUri(self.uri);
 
-    if (client_refs.fetchSub(1, .seq_cst) == 1) lib_mongo.cleanUp();
+    driver_mutex.lockUncancelable(self.io);
+    const is_last = client_refs.fetchSub(1, .seq_cst) == 1;
+
+    if (self.debug_mode) {
+        if (debug_refs.fetchSub(1, .seq_cst) == 1)
+            lib_mongo.logSetHandler(null, null);
+    }
+
+    if (is_last) lib_mongo.cleanUp();
+    driver_mutex.unlock(self.io);
 }
 
 /// # Resets MongoDB Connection Pool
@@ -108,8 +140,13 @@ pub fn resetPool(self: *Self) !void {
     try self.pool_mutex.lock(self.io);
     defer self.pool_mutex.unlock(self.io);
 
+    const new_pool = lib_mongo.clientPoolNew(self.uri);
+
+    if (new_pool == null) return Error.OperationFailed;
+
+    // The previous pool is kept intact on a failed replacement
     lib_mongo.clientPoolDestroy(self.pool);
-    self.pool = lib_mongo.clientPoolNew(self.uri);
+    self.pool = new_pool;
 }
 
 /// # Returns a New Database Handle
@@ -178,7 +215,9 @@ pub fn bsonBuildLarge(
 }
 
 /// # Parses a JSON-Formatted String into a BSON Document
-/// **Remarks:** Intended for internal use only.
+/// **Remarks:** Intended for internal use only. When `doc` is provided and
+/// parsing fails, the document is left re-initialized (empty), so the
+/// previous contents are lost.
 fn bsonParse(
     self: *const Self,
     doc: ?BsonPtr,
@@ -359,6 +398,7 @@ pub fn toBsonDoc(data: anytype) Error!BsonPtr {
         .@"struct", .@"union" => try bsonEncodeDoc(doc, data),
         .optional => {
             if (data) |v| try bsonEncodeDoc(doc, v)
+            // An empty optional can not be encoded, FAILING loudly on purpose
             else return Error.OperationFailed;
         },
         .pointer => |p| {
@@ -550,6 +590,9 @@ fn logBsonErr(
 }
 
 /// # Creates a New Index Model
+/// **Remarks:** Index name is derived from the key only (`doc_key_index`),
+/// independent of the sort order. Thus `.Asc` and `.Desc` models for the same
+/// key share a name and can not be created together.
 pub fn indexModelCreate(
     heap: Allocator,
     doc_key: Str,
@@ -577,10 +620,86 @@ pub fn indexModelCreate(
         return Error.OperationFailed;
     }
 
-    return lib_mongo.indexModelNew(key, opts);
+    const model = lib_mongo.indexModelNew(key, opts);
+    if (model == null) return Error.OutOfMemory;
+
+    return model;
+}
+
+/// # Creates a New Compound Index Model
+/// **Remarks:** `fields` are indexed in the given order, MongoDB can serve
+/// queries on any left-prefix of the key. The index name is derived from the
+/// key order, such as `field_a_1_field_b_-1_index`.
+///
+/// - `fields` - must contain at least one entry.
+pub fn indexModelCreateCompound(
+    heap: Allocator,
+    fields: []const IndexField,
+    unique: bool
+) !IndexModel {
+    if (fields.len == 0) return Error.OperationFailed;
+
+    const key = lib_mongo.bsonNew();
+    defer lib_mongo.bsonDestroy(key);
+
+    for (fields) |field| {
+        if (!lib_mongo.bsonAddInt32(key, field.name, @intFromEnum(field.order))) {
+            return Error.OperationFailed;
+        }
+    }
+
+    const opts = lib_mongo.bsonNew();
+    defer lib_mongo.bsonDestroy(opts);
+
+    var name_len: usize = "index".len;
+    for (fields) |field| {
+        name_len += field.name.len + 2 // separating underscores
+        + if (field.order == .Desc) 2 else 1; // order digits
+    }
+
+    const name = try heap.alloc(u8, name_len);
+    defer heap.free(name);
+
+    var pos: usize = 0;
+    for (fields) |field| {
+        @memcpy(name[pos..][0..field.name.len], field.name);
+        pos += field.name.len;
+
+        name[pos] = '_';
+        pos += 1;
+
+        if (field.order == .Desc) {
+            name[pos] = '-';
+            pos += 1;
+        }
+
+        name[pos] = '1';
+        pos += 1;
+
+        name[pos] = '_';
+        pos += 1;
+    }
+
+    @memcpy(name[pos..], "index");
+
+    if (!lib_mongo.bsonAddString(opts, "name", name)) {
+        return Error.OperationFailed;
+    }
+
+    if (!lib_mongo.bsonAddBool(opts, "unique", unique)) {
+        return Error.OperationFailed;
+    }
+
+    const model = lib_mongo.indexModelNew(key, opts);
+    if (model == null) return Error.OutOfMemory;
+
+    return model;
 }
 
 /// # Destroys the Index Model
+/// **Remarks:** Only frees the local model handle, the index on the server
+/// remains. Use `Collection.deleteIndex()` to drop it. Releases models created
+/// by both `indexModelCreate()` and `indexModelCreateCompound()`.
 pub fn indexModelDestroy(model: IndexModel) void {
     lib_mongo.indexModelDestroy(model);
 }
@@ -685,11 +804,25 @@ const Collection = struct {
         }
     }
 
-    /// # Rename the Collection
+    /// # Renames the Collection
+    /// **Remarks:** Fails when `new_name` already exists; use `renameWith()`
+    /// to drop the target collection first.
     pub fn rename(self: CollectionZ, dest_db: StrZ, new_name: StrZ) Error!void {
+        return self.renameWith(dest_db, new_name, false);
+    }
+
+    /// # Renames the Collection With an Optional Target Drop
+    /// - `drop_target` - Drops the destination collection when **true**.
+    /// **Remarks:** Internally executes on the `admin` database.
+    pub fn renameWith(
+        self: CollectionZ,
+        dest_db: StrZ,
+        new_name: StrZ,
+        drop_target: bool
+    ) Error!void {
         var err_res: lib_mongo.BsonError = undefined;
         const succeed = lib_mongo.renameCollection(
-            self.instance, dest_db, new_name, &err_res
+            self.instance, dest_db, new_name, drop_target, &err_res
         );
 
         if (!succeed) {
@@ -777,6 +910,7 @@ const Collection = struct {
     /// # Inserts Multiple Documents
     /// **Remarks:** Data must be a `[]const T`. Each document is inserted
     /// individually, thus not atomic with out ACID across multiple documents.
+    /// An empty input is treated as a successful no-op.
     ///
     /// - `opts` - is required for ACID transaction
     pub fn insertMany(
@@ -785,8 +919,14 @@ const Collection = struct {
         data: anytype,
         opts: ?BsonPtr
     ) !void {
+        if (data.len == 0) return;
+
         const docs = try heap.alloc([*c]Bson, data.len);
-        for (0..docs.len) |i| docs[i] = lib_mongo.bsonNew();
+        for (0..docs.len) |i| {
+            docs[i] = lib_mongo.bsonNew();
+
+            if (docs[i] == null) return Error.OutOfMemory;
+        }
 
         defer {
             for (docs) |doc| { if (doc) |d| lib_mongo.bsonDestroy(d); }
@@ -941,9 +1081,13 @@ const Collection = struct {
     }
 
     /// # Deletes an Index from the Collection
+    /// **Remarks:** An already-missing index counts as a successful no-op
+    /// (server code 26 - NamespaceNotFound, 27 - IndexNotFound).
     pub fn deleteIndex(self: CollectionZ, name: StrZ) !void {
         var err_res: lib_mongo.BsonError = undefined;
         if (!lib_mongo.deleteIndex(self.instance, name, &err_res)) {
+            if (err_res.code == 26 or err_res.code == 27) return;
+
             logBsonErr(.warn, self.debug_mode, &err_res);
 
             return Error.OperationFailed;
@@ -1027,12 +1171,6 @@ fn bsonIsScalar(comptime T: type) bool {
 
 fn bsonCheckScalar(comptime T: type) void {
     switch (@typeInfo(T)) {
-        .int => |n| {
-            if (n.bits > 53) {
-                const err_str = "@mongo: `{s}` in BSON decode exceeds the IEEE 754 double-precision boundary!";
-                @compileError(fmt.comptimePrint(err_str, .{@typeName(T)}));
-            }
-        },
         .float => |f| {
             if (f.bits != 64) @compileError("@mongo: Use only `f64` instead!");
         },
@@ -1192,7 +1330,12 @@ fn bsonDecodeValue(
             return lib_mongo.iterBool(iter);
         },
         .int => {
-            comptime bsonCheckScalar(T);
+            // Doubles represent integers exactly only up to 2^53, so double
+            // typed values are rejected for wider types; int32 and int64
+            // sources are always exact
+            const double_exact = comptime
+                math.maxInt(T) <= 9007199254740991 and
+                math.minInt(T) >= -9007199254740991;
 
             switch (lib_mongo.iterTypeTag(iter)) {
                 .int32, .int64 => {
@@ -1204,8 +1347,11 @@ fn bsonDecodeValue(
                     return @intCast(num);
                 },
                 .double => {
+                    if (!double_exact) return Error.OperationFailed;
+
                     const num = lib_mongo.iterAsDouble(iter);
                     if (!math.isFinite(num) or
+                        num != math.trunc(num) or
                         num < math.minInt(T) or num > math.maxInt(T)
                     ) return Error.OperationFailed;
 
