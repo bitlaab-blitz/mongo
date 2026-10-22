@@ -23,6 +23,14 @@ Here we write upgrading notes and make them as straightforward as possible.
 - A short description for fixed item n
 
 
+## [v1.7.1] - 2026-10-22
+
+Compile fix for Zig's `comptime_int` coercion errors.
+
+### Fixed
+
+- `indexModelCreateCompound()` no longer fails to compile with `value with comptime-only type 'comptime_int' depends on runtime control flow`; the per-field order digit length is now explicitly coerced to `usize` via `@as()` before being accumulated in the runtime index-name length loop.
+
 ## [v1.7.0] - 2026-10-18
 
 Major performance and correctness overhaul: direct BSON encoding/decoding, copy-free property appends and several memory/race bug fixes, better documentation, and Zig-0.17.0 version support.

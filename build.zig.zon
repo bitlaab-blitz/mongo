@@ -1,6 +1,6 @@
 .{
     .name = .mongo,
-    .version = "1.7.0",
+    .version = "1.7.1",
     .fingerprint = 0x713dc4373c6c474a,
     .minimum_zig_version = "0.17.0",
     .dependencies = .{

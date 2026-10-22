@@ -654,7 +654,7 @@ pub fn indexModelCreateCompound(
     var name_len: usize = "index".len;
     for (fields) |field| {
         name_len += field.name.len + 2 // separating underscores
-        + if (field.order == .Desc) 2 else 1; // order digits
+        + @as(usize, if (field.order == .Desc) 2 else 1); // order digits
     }
 
     const name = try heap.alloc(u8, name_len);

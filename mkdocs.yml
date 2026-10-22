@@ -1,4 +1,4 @@
-site_name: mongo v1.7.0
+site_name: mongo v1.7.1
 site_url: http://0.0.0.0:8001
 nav:
   - Getting Started: index.md
